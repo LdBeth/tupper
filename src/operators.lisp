@@ -260,15 +260,14 @@
       ((minusp n)
        (%iv-div-nozero (make-defined-cont 1d0 1d0) (%iv-int-pow a (- n))))
       ((evenp n)
-       (let ((lo (cond ((>= al 0d0) al)
-                       ((<= ah 0d0) ah)
-                       (t 0d0)))
-             (hi (if (>= (abs ah) (abs al)) ah al)))
-         (let ((vlo (expt (abs lo) n))
-               (vhi (expt (abs hi) n)))
-           (%preserve a
-                      (trans-down (min vlo vhi))
-                      (trans-up   (max vlo vhi))))))
+       ;;; mag-lo = min|x| over [al,ah]; mag-hi = max|x| over [al,ah].
+       ;;; Even n makes x^n strictly increasing in |x|, so mag-lo^n ≤ mag-hi^n
+       ;;; always — the min/max guard around vlo/vhi is an identity and drops out.
+       (let* ((mag-lo (cond ((>= al 0d0) al) ((<= ah 0d0) (- ah)) (t 0d0)))
+              (mag-hi (max (abs al) (abs ah))))
+         (%preserve a
+                    (trans-down (expt mag-lo n))
+                    (trans-up   (expt mag-hi n)))))
       (t                                ; odd, monotone
        (%preserve a (trans-down (expt al n)) (trans-up (expt ah n)))))))
 
@@ -317,8 +316,8 @@
   (- (+ a b c) (min a b c) (max a b c)))
 
 (defun iv-median (a b c)
-  (let ((vmin sb-ext:double-float-positive-infinity)
-        (vmax sb-ext:double-float-negative-infinity))
+  (let ((vmin +pos-inf+)
+        (vmax +neg-inf+))
     (declare (type double-float vmin vmax))
     (dolist (xa (list (ival-lo a) (ival-hi a)))
       (dolist (xb (list (ival-lo b) (ival-hi b)))
@@ -397,22 +396,11 @@
       ((> lo 0d0) (list (make-singleton  1d0 dl dh)))
       ((and (= lo 0d0) (= hi 0d0)) (list (make-singleton 0d0 dl dh)))
       (t
-       (let ((pieces '()))
-         (when (< lo 0d0)
-           (push (make-ival :lo -1d0 :hi -1d0
-                            :def-lo nil :def-hi dh
-                            :cont-lo nil :cont-hi dh)
-                 pieces))
-         (push (make-ival :lo 0d0 :hi 0d0
-                          :def-lo nil :def-hi dh
-                          :cont-lo nil :cont-hi dh)
-               pieces)
-         (when (> hi 0d0)
-           (push (make-ival :lo 1d0 :hi 1d0
-                            :def-lo nil :def-hi dh
-                            :cont-lo nil :cont-hi dh)
-                 pieces))
-         (nreverse pieces))))))
+       ;;; make-singleton v nil dh expands to the same make-ival call; use it.
+       (loop for (include val) in `((,(< lo 0d0) -1d0)
+                                    (t            0d0)
+                                    (,(> hi 0d0)  1d0))
+             when include collect (make-singleton val nil dh))))))
 
 ;;; --- mod -----------------------------------------------------------------
 ;;; iv-mod a b = a - b * floor(a/b), composed via the existing set-aware
