@@ -27,15 +27,10 @@
   (ivs-cap (mapcan op ivs)))
 
 (defun ivs-apply-binary (op as bs)
-  (let ((out '()))
-    (dolist (a as)
-      (dolist (b bs)
-        (dolist (r (funcall op a b))
-          (push r out))))
-    (ivs-cap (nreverse out))))
+  (ivs-cap (mapcan (lambda (a)
+                     (mapcan (lambda (b) (funcall op a b)) bs))
+                   as)))
 
-;;; Reduce an interval-set to one bool-iv via OR over each member.
-(defun ivs-bool-or (vs)
-  (bool-or* vs))
-(defun ivs-bool-and (vs)
-  (bool-and* vs))
+;;; Reduce an interval-set to one bool-iv.
+(defun ivs-bool-or  (vs) (bool-or* vs))
+(defun ivs-bool-and (vs) (bool-and* vs))

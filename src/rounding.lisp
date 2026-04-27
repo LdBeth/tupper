@@ -50,45 +50,29 @@
         (t (let ((bits (%double->bits x)))
              (%bits->double (if (plusp x) (1- bits) (1+ bits)))))))
 
-;;; Basic directed-rounded primitives.  Arithmetic ops on constant arguments
-;;; would otherwise be folded by the compiler at the *default* rounding mode;
-;;; declare NOTINLINE on +/-/etc. to force runtime evaluation.
-(defun add-down (a b)
-  (declare (type double-float a b) (notinline +))
-  (with-rounding :negative-infinity (+ a b)))
-(defun add-up (a b)
-  (declare (type double-float a b) (notinline +))
-  (with-rounding :positive-infinity (+ a b)))
-(defun sub-down (a b)
-  (declare (type double-float a b) (notinline -))
-  (with-rounding :negative-infinity (- a b)))
-(defun sub-up (a b)
-  (declare (type double-float a b) (notinline -))
-  (with-rounding :positive-infinity (- a b)))
-(defun mul-down (a b)
-  (declare (type double-float a b) (notinline *))
-  (with-rounding :negative-infinity (* a b)))
-(defun mul-up (a b)
-  (declare (type double-float a b) (notinline *))
-  (with-rounding :positive-infinity (* a b)))
-(defun div-down (a b)
-  (declare (type double-float a b) (notinline /))
-  (with-rounding :negative-infinity (/ a b)))
-(defun div-up (a b)
-  (declare (type double-float a b) (notinline /))
-  (with-rounding :positive-infinity (/ a b)))
-(defun sqrt-down (a)
-  (declare (type double-float a))
-  (dec-ulp (sqrt a)))     ; libm sqrt may not honor rounding; widen by 1 ULP.
-(defun sqrt-up (a)
-  (declare (type double-float a))
-  (inc-ulp (sqrt a)))
+;;; Directed-rounded primitives.  Defined via a macro so the law
+;;;   directed-OP-DIR(a,b) = with-rounding DIR (OP a b)
+;;; lives in one place.  NOTINLINE on the underlying op is load-bearing:
+;;; without it, SBCL constant-folds calls on literal arguments at the
+;;; default rounding mode, defeating the point of the wrapper.
+(defmacro define-directed-binary (name op mode)
+  `(defun ,name (a b)
+     (declare (type double-float a b) (notinline ,op))
+     (with-rounding ,mode (,op a b))))
 
-;;; Widened transcendentals: compute, then nudge ±1 ULP for safety.
-(declaim (inline trans-down trans-up))
-(defun trans-down (val)
-  (declare (type double-float val))
-  (dec-ulp val))
-(defun trans-up (val)
-  (declare (type double-float val))
-  (inc-ulp val))
+(define-directed-binary add-down + :negative-infinity)
+(define-directed-binary add-up   + :positive-infinity)
+(define-directed-binary sub-down - :negative-infinity)
+(define-directed-binary sub-up   - :positive-infinity)
+(define-directed-binary mul-down * :negative-infinity)
+(define-directed-binary mul-up   * :positive-infinity)
+(define-directed-binary div-down / :negative-infinity)
+(define-directed-binary div-up   / :positive-infinity)
+
+;;; sqrt and the libm transcendentals may not honor the rounding mode on
+;;; all platforms, so widen by 1 ULP.
+(declaim (inline sqrt-down sqrt-up trans-down trans-up))
+(defun sqrt-down (a) (declare (type double-float a)) (dec-ulp (sqrt a)))
+(defun sqrt-up   (a) (declare (type double-float a)) (inc-ulp (sqrt a)))
+(defun trans-down (val) (declare (type double-float val)) (dec-ulp val))
+(defun trans-up   (val) (declare (type double-float val)) (inc-ulp val))

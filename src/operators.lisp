@@ -5,88 +5,85 @@
 (declaim (optimize (speed 3) (safety 1) (debug 1)))
 
 ;;; --- helpers -------------------------------------------------------------
+;;; Every binary op AND's the def and cont-lo flags of its inputs and forces
+;;; cont-hi := T (the post-op upper-cont is always permissive).  Bundle that
+;;; into one helper returning three values.
+(defun combine-flags (&rest ivs)
+  (values (every #'ival-def-lo  ivs)
+          (every #'ival-def-hi  ivs)
+          (every #'ival-cont-lo ivs)))
 
-(defun and-defs (&rest ivs)
-  "Combine def flags via AND."
-  (values (every #'ival-def-lo ivs)
-          (every #'ival-def-hi ivs)))
-
-(defun and-conts (&rest ivs)
-  (values (every #'ival-cont-lo ivs)
-          (every #'ival-cont-hi ivs)))
+(defmacro with-combined-flags ((dl dh cl) ivs &body body)
+  `(multiple-value-bind (,dl ,dh ,cl) (apply #'combine-flags ,ivs)
+     ,@body))
 
 (defun min4 (a b c d) (min a b c d))
 (defun max4 (a b c d) (max a b c d))
 
+;;; preserve-flags: a -> ival with the same def/cont flags as A.
+(defmacro %preserve (a lo hi)
+  (let ((g (gensym)))
+    `(let ((,g ,a))
+       (make-ival :lo ,lo :hi ,hi
+                  :def-lo (ival-def-lo ,g) :def-hi (ival-def-hi ,g)
+                  :cont-lo (ival-cont-lo ,g) :cont-hi (ival-cont-hi ,g)))))
+
 ;;; --- unary negation ------------------------------------------------------
 
 (defun iv-neg (a)
-  (list (make-ival :lo (- (ival-hi a))
-                   :hi (- (ival-lo a))
-                   :def-lo (ival-def-lo a) :def-hi (ival-def-hi a)
-                   :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a))))
+  (list (%preserve a (- (ival-hi a)) (- (ival-lo a)))))
 
-;;; --- add / sub -----------------------------------------------------------
+;;; --- add / sub / mul (binary, share the flag-combining boilerplate) ------
+
+(defmacro %binary-result (a b lo hi)
+  `(with-combined-flags (dl dh cl) (list ,a ,b)
+     (list (make-ival :lo ,lo :hi ,hi
+                      :def-lo dl :def-hi dh
+                      :cont-lo cl :cont-hi t))))
 
 (defun iv-add (a b)
-  (multiple-value-bind (dl dh) (and-defs a b)
-    (multiple-value-bind (cl ch) (and-conts a b)
-      (declare (ignore ch))
-      (list (make-ival :lo (add-down (ival-lo a) (ival-lo b))
-                       :hi (add-up   (ival-hi a) (ival-hi b))
-                       :def-lo dl :def-hi dh
-                       :cont-lo cl :cont-hi t)))))
+  (%binary-result a b
+                  (add-down (ival-lo a) (ival-lo b))
+                  (add-up   (ival-hi a) (ival-hi b))))
 
 (defun iv-sub (a b)
-  (multiple-value-bind (dl dh) (and-defs a b)
-    (multiple-value-bind (cl ch) (and-conts a b)
-      (declare (ignore ch))
-      (list (make-ival :lo (sub-down (ival-lo a) (ival-hi b))
-                       :hi (sub-up   (ival-hi a) (ival-lo b))
-                       :def-lo dl :def-hi dh
-                       :cont-lo cl :cont-hi t)))))
+  (%binary-result a b
+                  (sub-down (ival-lo a) (ival-hi b))
+                  (sub-up   (ival-hi a) (ival-lo b))))
 
-;;; --- multiply ------------------------------------------------------------
+(defun %corner-bounds (down-op up-op al ah bl bh)
+  "Classic four-corner min/max for monotone-corner ops (mul, div)."
+  (declare (type double-float al ah bl bh))
+  (values
+   (min4 (funcall down-op al bl) (funcall down-op al bh)
+         (funcall down-op ah bl) (funcall down-op ah bh))
+   (max4 (funcall up-op al bl) (funcall up-op al bh)
+         (funcall up-op ah bl) (funcall up-op ah bh))))
 
 (defun iv-mul (a b)
-  (let ((al (ival-lo a)) (ah (ival-hi a))
-        (bl (ival-lo b)) (bh (ival-hi b)))
-    (declare (type double-float al ah bl bh))
-    (let ((lo (min4 (mul-down al bl) (mul-down al bh)
-                    (mul-down ah bl) (mul-down ah bh)))
-          (hi (max4 (mul-up al bl) (mul-up al bh)
-                    (mul-up ah bl) (mul-up ah bh))))
-      (multiple-value-bind (dl dh) (and-defs a b)
-        (multiple-value-bind (cl ch) (and-conts a b)
-          (declare (ignore ch))
-          (list (make-ival :lo lo :hi hi
-                           :def-lo dl :def-hi dh
-                           :cont-lo cl :cont-hi t)))))))
+  (multiple-value-bind (lo hi)
+      (%corner-bounds #'mul-down #'mul-up
+                      (ival-lo a) (ival-hi a) (ival-lo b) (ival-hi b))
+    (%binary-result a b lo hi)))
 
 ;;; --- divide --------------------------------------------------------------
 
 (defun %iv-div-nozero (a b)
   "B does NOT contain 0; classical four-corner div."
-  (let ((al (ival-lo a)) (ah (ival-hi a))
-        (bl (ival-lo b)) (bh (ival-hi b)))
-    (declare (type double-float al ah bl bh))
-    (let ((lo (min4 (div-down al bl) (div-down al bh)
-                    (div-down ah bl) (div-down ah bh)))
-          (hi (max4 (div-up al bl) (div-up al bh)
-                    (div-up ah bl) (div-up ah bh))))
-      (multiple-value-bind (dl dh) (and-defs a b)
-        (multiple-value-bind (cl ch) (and-conts a b)
-          (declare (ignore ch))
-          (make-ival :lo lo :hi hi
-                     :def-lo dl :def-hi dh
-                     :cont-lo cl :cont-hi t))))))
+  (multiple-value-bind (lo hi)
+      (%corner-bounds #'div-down #'div-up
+                      (ival-lo a) (ival-hi a) (ival-lo b) (ival-hi b))
+    (with-combined-flags (dl dh cl) (list a b)
+      (make-ival :lo lo :hi hi
+                 :def-lo dl :def-hi dh
+                 :cont-lo cl :cont-hi t))))
 
 (defun iv-div (a b)
   (cond
     ;; Denominator is exactly {0}: undefined everywhere.
     ((and (zerop (ival-lo b)) (zerop (ival-hi b)))
      (list (make-undefined)))
-    ;; Denominator strictly avoids 0: single interval, defined+continuous.
+    ;; Denominator strictly avoids 0: single interval.
     ((not (ival-contains-zero-p b))
      (list (%iv-div-nozero a b)))
     ;; Denominator straddles 0 -> two intervals (interval set).
@@ -105,9 +102,8 @@
                               :def-lo (ival-def-lo b) :def-hi (ival-def-hi b)
                               :cont-lo nil :cont-hi t)))
            (push (%iv-div-nozero a b+) results)))
-       ;; If the denominator interval reaches the actual point 0 from inside,
-       ;; the result is undefined exactly at that spot.  Mark def-lo nil and
-       ;; cont-lo nil on each piece.
+       ;; Denominator straddling 0 means the result is undefined exactly
+       ;; at that point: stamp def-lo/cont-lo accordingly.
        (mapcar (lambda (iv)
                  (setf (ival-def-lo iv) nil
                        (ival-cont-lo iv) nil)
@@ -122,12 +118,8 @@
     (cond
       ((< ah 0d0) (list (make-undefined)))
       ((>= al 0d0)
-       (list (make-ival :lo (max 0d0 (sqrt-down al))
-                        :hi (sqrt-up ah)
-                        :def-lo (ival-def-lo a) :def-hi (ival-def-hi a)
-                        :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a))))
+       (list (%preserve a (max 0d0 (sqrt-down al)) (sqrt-up ah))))
       (t
-       ;; straddles 0: defined only on [0, ah], so def-lo := nil
        (list (make-ival :lo 0d0 :hi (sqrt-up ah)
                         :def-lo nil :def-hi (ival-def-hi a)
                         :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a)))))))
@@ -141,17 +133,14 @@
                     ((<= ah 0d0) (- ah))
                     (t 0d0)))
           (hi (max (abs al) (abs ah))))
-      (list (make-ival :lo lo :hi hi
-                       :def-lo (ival-def-lo a) :def-hi (ival-def-hi a)
-                       :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a))))))
+      (list (%preserve a lo hi)))))
 
 ;;; --- exp / log -----------------------------------------------------------
 
 (defun iv-exp (a)
-  (list (make-ival :lo (trans-down (exp (ival-lo a)))
-                   :hi (trans-up   (exp (ival-hi a)))
-                   :def-lo (ival-def-lo a) :def-hi (ival-def-hi a)
-                   :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a))))
+  (list (%preserve a
+                   (trans-down (exp (ival-lo a)))
+                   (trans-up   (exp (ival-hi a))))))
 
 (defun iv-log (a)
   (let ((al (ival-lo a)) (ah (ival-hi a)))
@@ -159,93 +148,62 @@
     (cond
       ((<= ah 0d0) (list (make-undefined)))
       ((> al 0d0)
-       (list (make-ival :lo (trans-down (log al))
-                        :hi (trans-up   (log ah))
-                        :def-lo (ival-def-lo a) :def-hi (ival-def-hi a)
-                        :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a))))
+       (list (%preserve a (trans-down (log al)) (trans-up (log ah)))))
       (t
        (list (make-ival :lo +neg-inf+
                         :hi (trans-up (log ah))
                         :def-lo nil :def-hi (ival-def-hi a)
                         :cont-lo nil :cont-hi t))))))
 
-;;; --- sin / cos -----------------------------------------------------------
-;;; A critical-point-aware implementation: scan integer multiples of pi/2
-;;; that fall in [lo, hi] and clamp to ±1 when warranted.
+;;; --- sin / cos / tan -----------------------------------------------------
+;;; sin and cos share a scaffold: a period-guard, endpoint init, and a scan
+;;; over k in [ceil(lo/(pi/2)), floor(hi/(pi/2))] checking whether (mod k 4)
+;;; matches a residue that pins a critical extremum.  Parameterize by which
+;;; residue triggers which extremum.
 
 (defconstant +2pi+ (* 2d0 (coerce pi 'double-float)))
 (defconstant +pi/2+ (* 0.5d0 (coerce pi 'double-float)))
 
-(defun %sin-bounds (lo hi)
-  "Return (values smin smax) for sin over [lo,hi] (lo <= hi)."
-  ;; If the interval width covers a full period, every critical residue is
-  ;; hit -> answer is just [-1, 1].  Skip the (potentially huge) scan loop.
+(defun %trig-bounds (fn min-residues max-residues lo hi)
+  "Return (values vmin vmax) of FN over [lo, hi].  MIN-RESIDUES and
+   MAX-RESIDUES are lists of (mod k 4) values where a critical point pins
+   the min to -1 or the max to +1, respectively."
   (when (>= (- hi lo) +2pi+)
-    (return-from %sin-bounds (values -1d0 1d0)))
-  (let* ((s1 (sin lo)) (s2 (sin hi))
-         (smin (min s1 s2))
-         (smax (max s1 s2))
-         (pi/2 +pi/2+))
-    (let ((k-lo (ceiling (/ lo pi/2)))
-          (k-hi (floor   (/ hi pi/2))))
-      (loop for k from k-lo to k-hi
-            for s = (mod k 4) do
-              (case s
-                (1 (setf smax 1d0))   ; pi/2 + 2k pi -> +1
-                (3 (setf smin -1d0))  ; 3pi/2 + 2k pi -> -1
-                ;; 0 and 2 are zeros of sin -> already covered by endpoints
-                )))
-    (values (max -1d0 (trans-down smin))
-            (min  1d0 (trans-up   smax)))))
+    (return-from %trig-bounds (values -1d0 1d0)))
+  (let* ((v1 (funcall fn lo)) (v2 (funcall fn hi))
+         (vmin (min v1 v2)) (vmax (max v1 v2)))
+    (loop for k from (ceiling (/ lo +pi/2+)) to (floor (/ hi +pi/2+))
+          for s = (mod k 4) do
+            (when (member s min-residues) (setf vmin -1d0))
+            (when (member s max-residues) (setf vmax  1d0)))
+    (values (max -1d0 (trans-down vmin))
+            (min  1d0 (trans-up   vmax)))))
+
+(defun %sin-bounds (lo hi)
+  ;; sin: residue 1 -> +1 (max), 3 -> -1 (min); 0,2 are zeros (endpoints handle).
+  (%trig-bounds #'sin '(3) '(1) lo hi))
 
 (defun %cos-bounds (lo hi)
-  "Return (values cmin cmax) for cos over [lo,hi]."
-  (when (>= (- hi lo) +2pi+)
-    (return-from %cos-bounds (values -1d0 1d0)))
-  (let* ((c1 (cos lo)) (c2 (cos hi))
-         (cmin (min c1 c2))
-         (cmax (max c1 c2))
-         (pi/2 +pi/2+))
-    (let ((k-lo (ceiling (/ lo pi/2)))
-          (k-hi (floor   (/ hi pi/2))))
-      (loop for k from k-lo to k-hi
-            for s = (mod k 4) do
-              (case s
-                (0 (setf cmax 1d0))    ; cos(2k pi) = +1
-                (2 (setf cmin -1d0)))))
-    (values (max -1d0 (trans-down cmin))
-            (min  1d0 (trans-up   cmax)))))
+  ;; cos: residue 0 -> +1 (max), 2 -> -1 (min).
+  (%trig-bounds #'cos '(2) '(0) lo hi))
 
-(defun iv-sin (a)
+(defun %iv-sinusoid (a bounds-fn)
+  "Shared shell for iv-sin / iv-cos."
   (let ((al (ival-lo a)) (ah (ival-hi a)))
     (declare (type double-float al ah))
-    (cond
-      ((or (= al +neg-inf+) (= ah +pos-inf+))
-       (list (make-ival :lo -1d0 :hi 1d0
-                        :def-lo (ival-def-lo a) :def-hi (ival-def-hi a)
-                        :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a))))
-      (t (multiple-value-bind (lo hi) (%sin-bounds al ah)
-           (list (make-ival :lo lo :hi hi
-                            :def-lo (ival-def-lo a) :def-hi (ival-def-hi a)
-                            :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a))))))))
+    (multiple-value-bind (lo hi)
+        (if (or (= al +neg-inf+) (= ah +pos-inf+))
+            (values -1d0 1d0)
+            (funcall bounds-fn al ah))
+      (list (%preserve a lo hi)))))
 
-(defun iv-cos (a)
-  (let ((al (ival-lo a)) (ah (ival-hi a)))
-    (declare (type double-float al ah))
-    (cond
-      ((or (= al +neg-inf+) (= ah +pos-inf+))
-       (list (make-ival :lo -1d0 :hi 1d0
-                        :def-lo (ival-def-lo a) :def-hi (ival-def-hi a)
-                        :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a))))
-      (t (multiple-value-bind (lo hi) (%cos-bounds al ah)
-           (list (make-ival :lo lo :hi hi
-                            :def-lo (ival-def-lo a) :def-hi (ival-def-hi a)
-                            :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a))))))))
+(defun iv-sin (a) (%iv-sinusoid a #'%sin-bounds))
+(defun iv-cos (a) (%iv-sinusoid a #'%cos-bounds))
 
 ;;; tan: detect crossings of pi/2 + k*pi -> return interval set.
 (defun iv-tan (a)
   (let ((al (ival-lo a)) (ah (ival-hi a))
-        (pi/2 +pi/2+) (pi-d (coerce pi 'double-float)))
+        (pi-d (coerce pi 'double-float)))
     (declare (type double-float al ah))
     (cond
       ((or (= al +neg-inf+) (= ah +pos-inf+)
@@ -255,18 +213,12 @@
                         :def-lo nil :def-hi (ival-def-hi a)
                         :cont-lo nil :cont-hi t)))
       (t
-       ;; integer k with (k+1/2)*pi in (al, ah)?
        (let* ((k-lo (ceiling (- (/ al pi-d) 0.5d0)))
               (k-hi (floor   (- (/ ah pi-d) 0.5d0))))
          (cond
            ((> k-lo k-hi)
-            ;; no asymptote crossed
-            (list (make-ival :lo (trans-down (tan al))
-                             :hi (trans-up   (tan ah))
-                             :def-lo (ival-def-lo a) :def-hi (ival-def-hi a)
-                             :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a))))
+            (list (%preserve a (trans-down (tan al)) (trans-up (tan ah)))))
            (t
-            ;; conservative: split at each asymptote.
             (let ((segments '())
                   (left al))
               (loop for k from k-lo to k-hi
@@ -275,11 +227,10 @@
                       (setf left asym))
               (push (cons left ah) segments)
               (mapcar (lambda (seg)
-                        (let ((sl (car seg)) (sh (cdr seg)))
-                          (make-ival :lo (trans-down (tan sl))
-                                     :hi (trans-up   (tan sh))
-                                     :def-lo nil :def-hi (ival-def-hi a)
-                                     :cont-lo nil :cont-hi t)))
+                        (make-ival :lo (trans-down (tan (car seg)))
+                                   :hi (trans-up   (tan (cdr seg)))
+                                   :def-lo nil :def-hi (ival-def-hi a)
+                                   :cont-lo nil :cont-hi t))
                       (nreverse segments))))))))))
 
 ;;; --- pow -----------------------------------------------------------------
@@ -287,16 +238,13 @@
 ;;; positive bases.  Algorithm 3.3 (parity tagging) is left unimplemented.
 
 (defun %iv-int-pow (a n)
-  "A^n, n integer."
   (let ((al (ival-lo a)) (ah (ival-hi a)))
     (declare (type double-float al ah)
              (type integer n))
     (cond
-      ((zerop n)
-       (make-defined-cont 1d0 1d0))
+      ((zerop n) (make-defined-cont 1d0 1d0))
       ((minusp n)
-       (let ((p (%iv-int-pow a (- n))))
-         (%iv-div-nozero (make-defined-cont 1d0 1d0) p)))
+       (%iv-div-nozero (make-defined-cont 1d0 1d0) (%iv-int-pow a (- n))))
       ((evenp n)
        (let ((lo (cond ((>= al 0d0) al)
                        ((<= ah 0d0) ah)
@@ -304,32 +252,25 @@
              (hi (if (>= (abs ah) (abs al)) ah al)))
          (let ((vlo (expt (abs lo) n))
                (vhi (expt (abs hi) n)))
-           (make-ival :lo (trans-down (min vlo vhi))
-                      :hi (trans-up   (max vlo vhi))
-                      :def-lo (ival-def-lo a) :def-hi (ival-def-hi a)
-                      :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a)))))
-      (t                              ; odd, monotone
-       (make-ival :lo (trans-down (expt al n))
-                  :hi (trans-up   (expt ah n))
-                  :def-lo (ival-def-lo a) :def-hi (ival-def-hi a)
-                  :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a))))))
+           (%preserve a
+                      (trans-down (min vlo vhi))
+                      (trans-up   (max vlo vhi))))))
+      (t                                ; odd, monotone
+       (%preserve a (trans-down (expt al n)) (trans-up (expt ah n)))))))
 
 (defun iv-pow (a b)
   "Power: handles integer exponent (constant interval [n,n], n integer)
    or positive base; otherwise widens conservatively (Algorithm 3.3 hook)."
   (let ((bl (ival-lo b)) (bh (ival-hi b)))
     (cond
-      ;; Integer exponent (constant interval whose endpoints are equal int).
       ((and (= bl bh)
             (= bl (float (round bl) 1d0))
             (ival-totally-defined-p b))
        (list (%iv-int-pow a (round bl))))
-      ;; Positive base: a^b = exp(b * log a).
       ((> (ival-lo a) 0d0)
        (let* ((log-a (car (iv-log a)))
               (b*log (car (iv-mul b log-a))))
          (iv-exp b*log)))
-      ;; Otherwise: conservative widening with possibly-undefined.
       (t
        (list (make-ival :lo +neg-inf+ :hi +pos-inf+
                         :def-lo nil :def-hi (ival-def-hi a)
