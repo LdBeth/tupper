@@ -178,11 +178,14 @@
 
 (defun %sin-bounds (lo hi)
   "Return (values smin smax) for sin over [lo,hi] (lo <= hi)."
+  ;; If the interval width covers a full period, every critical residue is
+  ;; hit -> answer is just [-1, 1].  Skip the (potentially huge) scan loop.
+  (when (>= (- hi lo) +2pi+)
+    (return-from %sin-bounds (values -1d0 1d0)))
   (let* ((s1 (sin lo)) (s2 (sin hi))
          (smin (min s1 s2))
          (smax (max s1 s2))
          (pi/2 +pi/2+))
-    ;; Scan integers k such that k*pi/2 in (lo, hi) and check sin parity.
     (let ((k-lo (ceiling (/ lo pi/2)))
           (k-hi (floor   (/ hi pi/2))))
       (loop for k from k-lo to k-hi
@@ -197,6 +200,8 @@
 
 (defun %cos-bounds (lo hi)
   "Return (values cmin cmax) for cos over [lo,hi]."
+  (when (>= (- hi lo) +2pi+)
+    (return-from %cos-bounds (values -1d0 1d0)))
   (let* ((c1 (cos lo)) (c2 (cos hi))
          (cmin (min c1 c2))
          (cmax (max c1 c2))
@@ -243,7 +248,9 @@
         (pi/2 +pi/2+) (pi-d (coerce pi 'double-float)))
     (declare (type double-float al ah))
     (cond
-      ((or (= al +neg-inf+) (= ah +pos-inf+))
+      ((or (= al +neg-inf+) (= ah +pos-inf+)
+           ;; if width covers a full period, at least one asymptote is hit
+           (>= (- ah al) pi-d))
        (list (make-ival :lo +neg-inf+ :hi +pos-inf+
                         :def-lo nil :def-hi (ival-def-hi a)
                         :cont-lo nil :cont-hi t)))
