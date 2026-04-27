@@ -7,13 +7,33 @@
   (make-constant-iv (coerce n 'double-float)))
 
 (defun %n-ary (binop ident args x y)
-  "Fold an n-ary arithmetic op: (op a b c ...) = a `binop` b `binop` c ..."
-  (cond ((null args) (list (number->iv ident)))
+  "Fold an n-ary op left-to-right.  IDENT is the value of (op) with no args;
+   pass NIL to require at least one arg (used by min/max which have no
+   identity element on intervals)."
+  (cond ((null args)
+         (if ident
+             (list (number->iv ident))
+             (error "n-ary op with no identity needs >=1 arg")))
         ((null (cdr args)) (eval-expr (car args) x y))
         (t (reduce (lambda (acc e)
                      (ivs-apply-binary binop acc (eval-expr e x y)))
                    (cdr args)
                    :initial-value (eval-expr (car args) x y)))))
+
+;;; Operator dispatch tables.  Each entry is (SYMBOL . #'iv-fn).  Adding a
+;;; new operator typically means appending one row to the appropriate table.
+(defparameter *unary-ops*
+  `((sqrt     . ,#'iv-sqrt)  (abs      . ,#'iv-abs)
+    (sin      . ,#'iv-sin)   (cos      . ,#'iv-cos)   (tan . ,#'iv-tan)
+    (log      . ,#'iv-log)   (exp      . ,#'iv-exp)
+    (floor    . ,#'iv-floor) (ceiling  . ,#'iv-ceil)
+    (round    . ,#'iv-round) (truncate . ,#'iv-trunc)
+    (sgn      . ,#'iv-sgn)))
+
+(defparameter *binary-ops*
+  `((/   . ,#'iv-div)
+    (^   . ,#'iv-pow)
+    (mod . ,#'iv-mod)))
 
 (defun eval-expr (expr x y)
   "EXPR is an s-expression (or X/Y/number).  Returns a list of ivals."
@@ -24,28 +44,32 @@
     ((symbolp expr)
      (error "Unknown variable in expression: ~a" expr))
     ((consp expr)
-     (let ((op (car expr)) (args (cdr expr)))
-       (case op
-         (+ (%n-ary #'iv-add 0 args x y))
-         (* (%n-ary #'iv-mul 1 args x y))
-         (- (cond ((null args) (error "(-) with no args"))
-                  ((null (cdr args))
-                   (ivs-apply-unary #'iv-neg (eval-expr (car args) x y)))
-                  (t (%n-ary #'iv-sub 0 args x y))))
-         (/ (ivs-apply-binary #'iv-div
+     (let* ((op (car expr)) (args (cdr expr))
+            (u (cdr (assoc op *unary-ops*)))
+            (b (cdr (assoc op *binary-ops*))))
+       (cond
+         (u (ivs-apply-unary u (eval-expr (first args) x y)))
+         (b (ivs-apply-binary b
                               (eval-expr (first args) x y)
                               (eval-expr (second args) x y)))
-         (^ (ivs-apply-binary #'iv-pow
-                              (eval-expr (first args) x y)
-                              (eval-expr (second args) x y)))
-         (sqrt (ivs-apply-unary #'iv-sqrt (eval-expr (first args) x y)))
-         (abs  (ivs-apply-unary #'iv-abs  (eval-expr (first args) x y)))
-         (sin  (ivs-apply-unary #'iv-sin  (eval-expr (first args) x y)))
-         (cos  (ivs-apply-unary #'iv-cos  (eval-expr (first args) x y)))
-         (tan  (ivs-apply-unary #'iv-tan  (eval-expr (first args) x y)))
-         (log  (ivs-apply-unary #'iv-log  (eval-expr (first args) x y)))
-         (exp  (ivs-apply-unary #'iv-exp  (eval-expr (first args) x y)))
-         (t (error "Unknown operator: ~a" op)))))
+         (t
+          (case op
+            (+ (%n-ary #'iv-add 0 args x y))
+            (* (%n-ary #'iv-mul 1 args x y))
+            (- (cond ((null args) (error "(-) with no args"))
+                     ((null (cdr args))
+                      (ivs-apply-unary #'iv-neg (eval-expr (car args) x y)))
+                     (t (%n-ary #'iv-sub 0 args x y))))
+            (min (%n-ary #'iv-min nil args x y))
+            (max (%n-ary #'iv-max nil args x y))
+            (median (unless (= 3 (length args))
+                      (error "median expects exactly 3 args, got ~a"
+                             (length args)))
+                    (ivs-apply-ternary #'iv-median
+                                       (eval-expr (first args) x y)
+                                       (eval-expr (second args) x y)
+                                       (eval-expr (third args) x y)))
+            (t (error "Unknown operator: ~a" op)))))))
     (t (error "Bad expression: ~a" expr))))
 
 ;;; --- comparison of two interval sets -------------------------------------

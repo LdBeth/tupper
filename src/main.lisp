@@ -12,7 +12,14 @@
                     (* x (sin (* 2 (sqrt (+ (^ x 2) (^ y 2)))))))
                  -10d0 10d0 -10d0 10d0  512 512)
     ("sin=cos"   (= (sin x) (cos y))
-                 -10d0 10d0 -10d0 10d0  256 256)))
+                 -10d0 10d0 -10d0 10d0  256 256)
+    ;; Day-1 extension demos (groups A + B):
+    ("floor"     (= y (floor x))
+                 -4d0 4d0 -4d0 4d0  256 256)
+    ("sgn-sin"   (= y (sgn (sin x)))
+                 -10d0 10d0 -2d0 2d0  256 128)
+    ("min-eq"    (= (min x y) 1)
+                 -3d0 3d0 -3d0 3d0  256 256)))
 
 (defun run-example (entry &key (out-dir "out/"))
   (destructuring-bind (name formula L R B Top w h) entry

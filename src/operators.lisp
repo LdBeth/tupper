@@ -20,6 +20,22 @@
 (defun min4 (a b c d) (min a b c d))
 (defun max4 (a b c d) (max a b c d))
 
+;;; Widened-to-infinity result with cleared cont-lo: the canonical "after a
+;;; discontinuity / undefined region" shape, used by iv-div (zero denom),
+;;; iv-tan (asymptote), iv-log (straddles 0), iv-pow (negative-base fallback),
+;;; and the step-function infinity guard.
+(defun make-widened (def-hi)
+  (make-ival :lo +neg-inf+ :hi +pos-inf+
+             :def-lo nil :def-hi def-hi
+             :cont-lo nil :cont-hi t))
+
+;;; Defined-cont singleton at V (used by sgn).
+(defun make-singleton (v dl dh)
+  (declare (type double-float v))
+  (make-ival :lo v :hi v
+             :def-lo dl :def-hi dh
+             :cont-lo dl :cont-hi dh))
+
 ;;; preserve-flags: a -> ival with the same def/cont flags as A.
 (defmacro %preserve (a lo hi)
   (let ((g (gensym)))
@@ -209,9 +225,7 @@
       ((or (= al +neg-inf+) (= ah +pos-inf+)
            ;; if width covers a full period, at least one asymptote is hit
            (>= (- ah al) pi-d))
-       (list (make-ival :lo +neg-inf+ :hi +pos-inf+
-                        :def-lo nil :def-hi (ival-def-hi a)
-                        :cont-lo nil :cont-hi t)))
+       (list (make-widened (ival-def-hi a))))
       (t
        (let* ((k-lo (ceiling (- (/ al pi-d) 0.5d0)))
               (k-hi (floor   (- (/ ah pi-d) 0.5d0))))
@@ -272,6 +286,141 @@
               (b*log (car (iv-mul b log-a))))
          (iv-exp b*log)))
       (t
-       (list (make-ival :lo +neg-inf+ :hi +pos-inf+
-                        :def-lo nil :def-hi (ival-def-hi a)
-                        :cont-lo nil :cont-hi t))))))
+       (list (make-widened (ival-def-hi a)))))))
+
+;;; --- min / max -----------------------------------------------------------
+;;; Both monotone in each argument: the bound is just min/max of corresponding
+;;; endpoints.  def/cont are AND'd; cont-hi forced T (consistent with other
+;;; binary ops).
+
+(defun iv-min (a b)
+  (with-combined-flags (dl dh cl) (list a b)
+    (list (make-ival :lo (min (ival-lo a) (ival-lo b))
+                     :hi (min (ival-hi a) (ival-hi b))
+                     :def-lo dl :def-hi dh
+                     :cont-lo cl :cont-hi t))))
+
+(defun iv-max (a b)
+  (with-combined-flags (dl dh cl) (list a b)
+    (list (make-ival :lo (max (ival-lo a) (ival-lo b))
+                     :hi (max (ival-hi a) (ival-hi b))
+                     :def-lo dl :def-hi dh
+                     :cont-lo cl :cont-hi t))))
+
+;;; --- median (3-arg) ------------------------------------------------------
+;;; median(a,b,c) = a + b + c - min(a,b,c) - max(a,b,c).  The bound is the
+;;; hull of the medians at the 8 corner combinations.
+
+(declaim (inline %median3))
+(defun %median3 (a b c)
+  (declare (type double-float a b c))
+  (- (+ a b c) (min a b c) (max a b c)))
+
+(defun iv-median (a b c)
+  (let ((vmin sb-ext:double-float-positive-infinity)
+        (vmax sb-ext:double-float-negative-infinity))
+    (declare (type double-float vmin vmax))
+    (dolist (xa (list (ival-lo a) (ival-hi a)))
+      (dolist (xb (list (ival-lo b) (ival-hi b)))
+        (dolist (xc (list (ival-lo c) (ival-hi c)))
+          (let ((m (%median3 xa xb xc)))
+            (when (< m vmin) (setf vmin m))
+            (when (> m vmax) (setf vmax m))))))
+    (with-combined-flags (dl dh cl) (list a b c)
+      (list (make-ival :lo vmin :hi vmax
+                       :def-lo dl :def-hi dh
+                       :cont-lo cl :cont-hi t)))))
+
+;;; --- floor / ceil / round / trunc ---------------------------------------
+;;; All four are step functions; the implementation pattern is from the paper
+;;; (section 11): inspect the integer-step count between f(lo) and f(hi).
+;;; Zero steps  -> single defined-cont singleton at that integer.
+;;; One step    -> two singleton intervals (the discontinuity straddles).
+;;; >1 step     -> hull [f(lo), f(hi)] with cont-lo := nil.
+
+(defun %iv-step (iv step-fn)
+  (let ((lo (ival-lo iv))
+        (hi (ival-hi iv))
+        (dl (ival-def-lo iv))
+        (dh (ival-def-hi iv)))
+    (declare (type double-float lo hi))
+    (cond
+      ((or (= lo +neg-inf+) (= hi +pos-inf+))
+       (list (make-widened dh)))
+      (t
+       (let ((flo (funcall step-fn lo))
+             (fhi (funcall step-fn hi)))
+         (declare (type double-float flo fhi))
+         (cond
+           ((= flo fhi)
+            (list (make-ival :lo flo :hi flo
+                             :def-lo dl :def-hi dh
+                             :cont-lo dl :cont-hi dh)))
+           ((= (- fhi flo) 1d0)
+            (list (make-ival :lo flo :hi flo
+                             :def-lo nil :def-hi dh
+                             :cont-lo nil :cont-hi dh)
+                  (make-ival :lo fhi :hi fhi
+                             :def-lo nil :def-hi dh
+                             :cont-lo nil :cont-hi dh)))
+           (t
+            (list (make-ival :lo flo :hi fhi
+                             :def-lo dl :def-hi dh
+                             :cont-lo nil :cont-hi dh)))))))))
+
+(defun %ffloor1 (x) (declare (type double-float x)) (values (ffloor x)))
+(defun %fceil1  (x) (declare (type double-float x)) (values (fceiling x)))
+(defun %fround1 (x) (declare (type double-float x)) (values (fround x)))
+(defun %ftrunc1 (x) (declare (type double-float x)) (values (ftruncate x)))
+
+(defun iv-floor (iv) (%iv-step iv #'%ffloor1))
+(defun iv-ceil  (iv) (%iv-step iv #'%fceil1))
+;;; round: CL's fround is round-half-to-even (banker's rounding).
+(defun iv-round (iv) (%iv-step iv #'%fround1))
+;;; trunc: ftruncate is floor for x>=0, ceil for x<0.  The step pattern at
+;;; every integer is the same as floor's, so the shared scaffold suffices.
+(defun iv-trunc (iv) (%iv-step iv #'%ftrunc1))
+
+;;; --- sgn -----------------------------------------------------------------
+;;; Three-valued: -1, 0, +1.  When the input straddles 0 the result is an
+;;; interval set covering the relevant subset of {-1, 0, 1}, with cont-lo
+;;; cleared (sgn is discontinuous at 0).
+
+(defun iv-sgn (iv)
+  (let ((lo (ival-lo iv))
+        (hi (ival-hi iv))
+        (dl (ival-def-lo iv))
+        (dh (ival-def-hi iv)))
+    (declare (type double-float lo hi))
+    (cond
+      ((< hi 0d0) (list (make-singleton -1d0 dl dh)))
+      ((> lo 0d0) (list (make-singleton  1d0 dl dh)))
+      ((and (= lo 0d0) (= hi 0d0)) (list (make-singleton 0d0 dl dh)))
+      (t
+       (let ((pieces '()))
+         (when (< lo 0d0)
+           (push (make-ival :lo -1d0 :hi -1d0
+                            :def-lo nil :def-hi dh
+                            :cont-lo nil :cont-hi dh)
+                 pieces))
+         (push (make-ival :lo 0d0 :hi 0d0
+                          :def-lo nil :def-hi dh
+                          :cont-lo nil :cont-hi dh)
+               pieces)
+         (when (> hi 0d0)
+           (push (make-ival :lo 1d0 :hi 1d0
+                            :def-lo nil :def-hi dh
+                            :cont-lo nil :cont-hi dh)
+                 pieces))
+         (nreverse pieces))))))
+
+;;; --- mod -----------------------------------------------------------------
+;;; iv-mod a b = a - b * floor(a/b), composed via the existing set-aware
+;;; primitives.  Discontinuities at every wraparound flow naturally out of
+;;; the iv-floor split.
+
+(defun iv-mod (a b)
+  (let* ((quot (ivs-apply-binary #'iv-div  (list a) (list b)))
+         (fl   (ivs-apply-unary  #'iv-floor quot))
+         (prod (ivs-apply-binary #'iv-mul   (list b) fl)))
+    (ivs-apply-binary #'iv-sub (list a) prod)))
