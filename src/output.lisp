@@ -13,11 +13,13 @@
   "PIXMAP is (H x W) (unsigned-byte 8) array.  Writes PPM with y-up flip."
   (let* ((h (array-dimension pixmap 0))
          (w (array-dimension pixmap 1))
-         (rgb (make-array (list h w))))
+         ;; cl-netpbm expects array dimensions (WIDTH HEIGHT) and reads pixels
+         ;; as (aref data x y); see write-pixmap in cl-netpbm/src/main.lisp.
+         (rgb (make-array (list w h))))
     (dotimes (y h)
       (dotimes (x w)
         ;; y-up convention -> flip: PPM row 0 is top.
-        (setf (aref rgb (- h 1 y) x) (pixel-rgb (aref pixmap y x)))))
+        (setf (aref rgb x (- h 1 y)) (pixel-rgb (aref pixmap y x)))))
     (netpbm:write-to-file path rgb
                           :format :ppm
                           :encoding :binary
