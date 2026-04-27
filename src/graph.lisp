@@ -3,6 +3,11 @@
 
 (declaim (optimize (speed 3) (safety 1) (debug 1)))
 
+;;; Pixel colour constants stored in the (unsigned-byte 8) pixmap.
+(defconstant +pixel-black+ 0)
+(defconstant +pixel-white+ 1)
+(defconstant +pixel-red+   2)
+
 ;;; --- pixel / block coordinate bounds ------------------------------------
 ;;; A pixel column PX of WIDTH spans real-x = L + (R-L) * PX / WIDTH (lo edge)
 ;;; up to PX+1 (hi edge).  Each edge is computed once with directed rounding
@@ -40,6 +45,7 @@
           (pixel-edge-y py-hi height B T* :positive-infinity)))
 
 (defun fill-block (pixmap x-lo x-hi y-lo y-hi color)
+  (declare (type (unsigned-byte 8) color))
   (loop for py from y-lo below y-hi do
     (loop for px from x-lo below x-hi do
       (setf (aref pixmap py px) color))))
@@ -72,7 +78,9 @@
         (Rd (coerce R 'double-float))
         (Bd (coerce B 'double-float))
         (Td (coerce Top 'double-float))
-        (pixmap (make-array (list height width) :initial-element :red)))
+        (pixmap (make-array (list height width)
+                            :element-type '(unsigned-byte 8)
+                            :initial-element +pixel-red+)))
     ;; Step 1: pyramid of pixel blocks, top-down.  Block size = power of 2.
     (let ((bsz (let ((s 1)) (loop while (and (<= (* s 2) width)
                                              (<= (* s 2) height))
@@ -93,7 +101,7 @@
 (defun block-all-decided-p (pixmap x-lo y-lo x-hi y-hi)
   (loop for py from y-lo below y-hi
         always (loop for px from x-lo below x-hi
-                     always (not (eq (aref pixmap py px) :red)))))
+                     always (/= (aref pixmap py px) +pixel-red+))))
 
 (defun %quadrant-children (px-lo py-lo size w h)
   "Return the list of <(x y size/2)> sub-block tuples for SUBDIVIDE."
@@ -121,8 +129,8 @@
                 (multiple-value-bind (xl xh) (block-bounds-x px-lo px-hi w L R)
                   (multiple-value-bind (yl yh) (block-bounds-y py-lo py-hi h B Top)
                     (case (decide-cell formula xl xh yl yh)
-                      (:black (fill-block pixmap px-lo px-hi py-lo py-hi :black))
-                      (:white (fill-block pixmap px-lo px-hi py-lo py-hi :white))
+                      (:black (fill-block pixmap px-lo px-hi py-lo py-hi +pixel-black+))
+                      (:white (fill-block pixmap px-lo px-hi py-lo py-hi +pixel-white+))
                       ;; :ivt or :undecided -> refine.  (IVT at block size > 1
                       ;; cannot localize the solution, so we keep subdividing.)
                       (otherwise
@@ -135,24 +143,24 @@
 (defun refine-subpixels (formula pixmap L R B Top w h max-depth)
   (loop for py from 0 below h do
     (loop for px from 0 below w do
-      (when (eq (aref pixmap py px) :red)
+      (when (= (aref pixmap py px) +pixel-red+)
         (multiple-value-bind (xl xh) (pixel-bounds-x px w L R)
           (multiple-value-bind (yl yh) (pixel-bounds-y py h B Top)
             (setf (aref pixmap py px)
                   (subpixel-decide formula xl xh yl yh max-depth))))))))
 
 (defun subpixel-decide (formula xl xh yl yh depth)
-  "Recursively probe a single pixel; returns :black / :white / :red.
+  "Recursively probe a single pixel; returns +pixel-black+ / +pixel-white+ / +pixel-red+.
    At the subpixel level an IVT existence proof IS sufficient to colour the
    pixel black (the rectangle is small enough to localize the solution)."
   (let ((decision (decide-cell formula xl xh yl yh)))
     (case decision
-      (:black :black)
-      (:white :white)
-      (:ivt   :black)                   ; <-- the asymmetry vs. block pass
+      (:black +pixel-black+)
+      (:white +pixel-white+)
+      (:ivt   +pixel-black+)            ; <-- the asymmetry vs. block pass
       (otherwise
        (cond
-         ((<= depth 0) :red)
+         ((<= depth 0) +pixel-red+)
          (t (let* ((xm (* 0.5d0 (+ xl xh)))
                    (ym (* 0.5d0 (+ yl yh)))
                    (results
@@ -160,6 +168,6 @@
                           (subpixel-decide formula xm xh yl ym (1- depth))
                           (subpixel-decide formula xl xm ym yh (1- depth))
                           (subpixel-decide formula xm xh ym yh (1- depth)))))
-              (cond ((some (lambda (c) (eq c :black)) results) :black)
-                    ((every (lambda (c) (eq c :white)) results) :white)
-                    (t :red)))))))))
+              (cond ((some (lambda (c) (= c +pixel-black+)) results) +pixel-black+)
+                    ((every (lambda (c) (= c +pixel-white+)) results) +pixel-white+)
+                    (t +pixel-red+)))))))))

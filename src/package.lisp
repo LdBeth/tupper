@@ -5,4 +5,7 @@
            #:graph-formula
            #:save-ppm
            #:ival #:make-ival
-           #:eval-formula))
+           #:eval-formula
+           #:+pixel-black+
+           #:+pixel-white+
+           #:+pixel-red+))
