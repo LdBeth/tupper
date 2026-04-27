@@ -44,6 +44,41 @@
          (let* ((pi-d (coerce pi 'double-float))
                 (r (car (iv-sin (make-defined-cont 0d0 pi-d)))))
            (>= (ival-hi r) 1d0)))
+  ;; Regression: wide-interval sin/cos/tan must short-circuit to the full
+  ;; range without iterating over every k*pi/2 in [lo, hi].  Before the fix,
+  ;; iv-sin on [0, 1e8] looped ~6e7 times per call and made the
+  ;; exp-sin-over-[-10,10] graph take ~25 minutes.
+  (format t "~&== sin/cos/tan wide-interval regression ==~%")
+  (check "iv-sin on [0, 1d8] is [-1,1] (and fast)"
+         (let* ((t0 (get-internal-real-time))
+                (r (car (iv-sin (make-defined-cont 0d0 1d8))))
+                (dt (/ (- (get-internal-real-time) t0)
+                       (float internal-time-units-per-second))))
+           (and (= (ival-lo r) -1d0) (= (ival-hi r) 1d0)
+                (< dt 0.05d0))))
+  (check "iv-cos on [-1d10, 1d10] is [-1,1] (and fast)"
+         (let* ((t0 (get-internal-real-time))
+                (r (car (iv-cos (make-defined-cont -1d10 1d10))))
+                (dt (/ (- (get-internal-real-time) t0)
+                       (float internal-time-units-per-second))))
+           (and (= (ival-lo r) -1d0) (= (ival-hi r) 1d0)
+                (< dt 0.05d0))))
+  (check "iv-tan on [0, 1d6] is unbounded (and fast)"
+         (let* ((t0 (get-internal-real-time))
+                (r (car (iv-tan (make-defined-cont 0d0 1d6))))
+                (dt (/ (- (get-internal-real-time) t0)
+                       (float internal-time-units-per-second))))
+           (and (= (ival-lo r) +neg-inf+) (= (ival-hi r) +pos-inf+)
+                (< dt 0.05d0))))
+  (check "narrow-interval sin still uses critical-point detection"
+         ;; Sanity: the early-out must NOT fire for narrow intervals.
+         ;; sin over [0, pi] (~3.14, less than 2pi) must still return [0, 1].
+         (let* ((pi-d (coerce pi 'double-float))
+                (r (car (iv-sin (make-defined-cont 0d0 pi-d)))))
+           (and (<= (ival-lo r) 0d0) (>= (ival-hi r) 1d0)
+                ;; NOT widened all the way to -1 (that would mean the
+                ;; period guard fired wrongly).
+                (> (ival-lo r) -0.5d0))))
   (format t "~&== formula eval ==~%")
   (check "1 < 2 -> :tt"
          (eq :tt (eval-formula '(< 1 2)
@@ -53,5 +88,38 @@
          (eq :ff (eval-formula '(< y (sqrt x))
                                (make-defined-cont -1d0 -0.5d0)
                                (make-defined-cont 0d0 1d0))))
+  ;; End-to-end reliability invariants on rendered pixmaps.
+  (format t "~&== end-to-end reliability ==~%")
+  (check "y < sqrt(x): zero black pixels in x<0"
+         ;; The whole point of the def<F,*> propagation: undefined operands
+         ;; must make comparisons FF, so the left half must be all white/red.
+         (let ((pm (graph-formula '(< y (sqrt x)) -1d0 1d0 -1d0 1d0 64 64
+                                  :max-subpixel-depth 3))
+               (nb 0))
+           (dotimes (y 64) (dotimes (x 32)
+             (when (eq (aref pm y x) :black) (incf nb))))
+           (zerop nb)))
+  (check "y = 1/x: zero black pixels on the column straddling x=0"
+         ;; The interval-set return from iv-div for zero-straddling
+         ;; denominators must keep the discontinuity column clean.
+         (let* ((pm (graph-formula '(= y (/ 1 x)) -4d0 7d0 -4d0 7d0 128 128
+                                   :max-subpixel-depth 3))
+                (col (floor (* 128 (/ 4d0 11d0))))   ; column where x=0
+                (nb 0))
+           (dotimes (y 128)
+             (when (eq (aref pm y col) :black) (incf nb)))
+           (zerop nb)))
+  (check "exp(sin x + cos y) = sin(exp(x+y)) on [-10,10] finishes fast"
+         ;; Regression for the wide-sin/cos pathology: this graph at 64x64
+         ;; ran ~3 minutes before the fix; should now be sub-second.
+         (let* ((t0 (get-internal-real-time))
+                (pm (graph-formula
+                     '(= (exp (+ (sin x) (cos y))) (sin (exp (+ x y))))
+                     -10d0 10d0 -10d0 10d0 64 64
+                     :max-subpixel-depth 3))
+                (dt (/ (- (get-internal-real-time) t0)
+                       (float internal-time-units-per-second))))
+           (declare (ignore pm))
+           (< dt 5d0)))
   (format t "~&Failures: ~a~%" *fail-count*)
   (zerop *fail-count*))
