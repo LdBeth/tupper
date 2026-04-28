@@ -16,3 +16,16 @@
                              (:file "graph")
                              (:file "output")
                              (:file "main")))))
+
+(asdf:defsystem #:tupper/tests
+  :description "Tests for tupper."
+  :depends-on (#:tupper)
+  :serial t
+  :components ((:module "tests"
+                :components ((:file "test-interval")
+                             (:file "test-operators"))))
+  :perform (asdf:test-op (op c)
+             (let ((a (funcall (read-from-string "tupper::run-tests")))
+                   (b (funcall (read-from-string "tupper::run-operator-tests"))))
+               (unless (and a b)
+                 (error "Tests failed.")))))
