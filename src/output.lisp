@@ -9,7 +9,7 @@
         ((= byte +pixel-red+)   (vector 220  60  60))
         (t                      (vector 128 128 128))))
 
-(defun save-ppm (pixmap path)
+(defun save-ppm (pixmap path &key (if-exists :supersede))
   "PIXMAP is (H x W) (unsigned-byte 8) array.  Writes PPM with y-up flip."
   (let* ((h (array-dimension pixmap 0))
          (w (array-dimension pixmap 1))
@@ -23,5 +23,6 @@
     (netpbm:write-to-file path rgb
                           :format :ppm
                           :encoding :binary
-                          :maximum-value 255)
+                          :maximum-value 255
+                          :if-exists if-exists)
     path))
