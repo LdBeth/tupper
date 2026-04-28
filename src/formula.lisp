@@ -31,9 +31,10 @@
     (sgn      . ,#'iv-sgn)))
 
 (defparameter *binary-ops*
-  `((/   . ,#'iv-div)
-    (^   . ,#'iv-pow)
-    (mod . ,#'iv-mod)))
+  `((/    . ,#'iv-div)
+    (^    . ,#'iv-pow)
+    (expt . ,#'iv-pow)
+    (mod  . ,#'iv-mod)))
 
 (defun eval-expr (expr x y)
   "EXPR is an s-expression (or X/Y/number).  Returns a list of ivals."

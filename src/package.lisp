@@ -9,5 +9,6 @@
            #:+pixel-black+
            #:+pixel-white+
            #:+pixel-red+
+           #:^
            #:x
            #:y))

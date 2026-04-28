@@ -16,7 +16,11 @@
     ("fig5a"     (> (- (cos (cos (min (+ (sin x) y) (+ x (sin y)))))
                        (cos (sin (max (+ (sin y) x) (+ y (sin x))))))
                   0)
-                 -10d0 10d0 -10d0 10d0 512 512)
+     -10d0 10d0 -10d0 10d0 512 512)
+    ("wve"       (= (cos (- 2 (^ y 2)))
+                  (* x y (sin (- 1 (^ x 2)))
+                   (sin (- 2 (^ y 2)))))
+    -10d0 10d0 -10d0 10d0 512 512)
     ;; Day-1 extension demos (groups A + B):
     ("floor"     (= y (floor x))
                  -4d0 4d0 -4d0 4d0  256 256)
