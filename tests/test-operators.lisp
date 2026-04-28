@@ -121,6 +121,42 @@
                              (make-defined-cont 1d0 1d0)))
              2))
 
+  (format t "~&== pow ==~%")
+  (check "[2,3]^2 covers [4,9] (positive base, even)"
+         (let ((r (car (iv-pow (make-defined-cont 2d0 3d0)
+                               (make-defined-cont 2d0 2d0)))))
+           (and (<= (ival-lo r) 4d0) (>= (ival-hi r) 9d0)
+                (>= (ival-lo r) 0d0))))
+  (check "[-3,-2]^2 covers [4,9] (negative base, even)"
+         (let ((r (car (iv-pow (make-defined-cont -3d0 -2d0)
+                               (make-defined-cont 2d0 2d0)))))
+           (and (<= (ival-lo r) 4d0) (>= (ival-hi r) 9d0)
+                (>= (ival-lo r) 0d0))))
+  (check "[-2,3]^2: lo<=0 and hi>=9 (zero-crossing + even)"
+         (let ((r (car (iv-pow (make-defined-cont -2d0 3d0)
+                               (make-defined-cont 2d0 2d0)))))
+           (and (<= (ival-lo r) 0d0) (>= (ival-hi r) 9d0))))
+  (check "[-3,-2]^3 covers [-27,-8] (odd on negative base)"
+         (let ((r (car (iv-pow (make-defined-cont -3d0 -2d0)
+                               (make-defined-cont 3d0 3d0)))))
+           (and (<= (ival-lo r) -27d0) (>= (ival-hi r) -8d0))))
+  (check "x^0 = [1,1]"
+         (let ((r (car (iv-pow (make-defined-cont -2d0 3d0)
+                               (make-defined-cont 0d0 0d0)))))
+           (and (= (ival-lo r) 1d0) (= (ival-hi r) 1d0))))
+  (check "[2,4]^(-1) covers [0.25,0.5]"
+         (let ((r (car (iv-pow (make-defined-cont 2d0 4d0)
+                               (make-defined-cont -1d0 -1d0)))))
+           (and (<= (ival-lo r) 0.25d0) (>= (ival-hi r) 0.5d0))))
+  (check "positive base real exponent [4,9]^0.5 covers [2,3]"
+         (let ((r (car (iv-pow (make-defined-cont 4d0 9d0)
+                               (make-defined-cont 0.5d0 0.5d0)))))
+           (and (<= (ival-lo r) 2d0) (>= (ival-hi r) 3d0))))
+  (check "negative base + non-integer exp widens to [-inf,+inf]"
+         (let ((r (car (iv-pow (make-defined-cont -2d0 3d0)
+                               (make-defined-cont 0.5d0 0.5d0)))))
+           (and (= (ival-lo r) +neg-inf+) (= (ival-hi r) +pos-inf+))))
+
   (format t "~&== formula dispatch ==~%")
   (check "(floor x) at x=1.7 -> {1}"
          (let ((r (eval-expr '(floor x)
@@ -132,6 +168,21 @@
                              (make-defined-cont 0d0 2d0)
                              (make-defined-cont 1d0 1d0))))
            (and (= (ival-lo (first r)) 0d0) (= (ival-hi (first r)) 1d0))))
+  (check "(min x y 0) over x=[1,2], y=[3,4] -> lo=0 (n-ary)"
+         (let ((r (eval-expr '(min x y 0)
+                             (make-defined-cont 1d0 2d0)
+                             (make-defined-cont 3d0 4d0))))
+           (= (ival-lo (first r)) 0d0)))
+  (check "(max x y 10) over x=[1,2], y=[3,4] -> hi=10 (n-ary)"
+         (let ((r (eval-expr '(max x y 10)
+                             (make-defined-cont 1d0 2d0)
+                             (make-defined-cont 3d0 4d0))))
+           (= (ival-hi (first r)) 10d0)))
+  (check "(^ x 2) at x=[-2,3] -> lo<=0, hi>=9"
+         (let ((r (eval-expr '(^ x 2)
+                             (make-defined-cont -2d0 3d0)
+                             (make-defined-cont 0d0 0d0))))
+           (and (<= (ival-lo (first r)) 0d0) (>= (ival-hi (first r)) 9d0))))
   (check "(median x y 1) at x=0.5, y=0.5 -> 0.5"
          (let ((r (eval-expr '(median x y 1)
                              (make-defined-cont 0.5d0 0.5d0)

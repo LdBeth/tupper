@@ -40,6 +40,33 @@
          (let ((r (car (iv-sqrt (make-defined-cont -1d0 4d0)))))
            (and (= (ival-lo r) 0d0) (>= (ival-hi r) 2d0)
                 (not (ival-def-lo r)))))
+  (check "iv-neg of [1,3] = [-3,-1]"
+         (let ((r (car (iv-neg (make-defined-cont 1d0 3d0)))))
+           (and (= (ival-lo r) -3d0) (= (ival-hi r) -1d0))))
+  (check "iv-sub of [3,4]-[1,2] covers [1,3]"
+         (let ((r (car (iv-sub (make-defined-cont 3d0 4d0)
+                               (make-defined-cont 1d0 2d0)))))
+           (and (<= (ival-lo r) 1d0) (>= (ival-hi r) 3d0))))
+  (check "iv-abs of [-2,3] = [0,3]"
+         (let ((r (car (iv-abs (make-defined-cont -2d0 3d0)))))
+           (and (= (ival-lo r) 0d0) (= (ival-hi r) 3d0))))
+  (check "iv-abs of [-3,-1] = [1,3]"
+         (let ((r (car (iv-abs (make-defined-cont -3d0 -1d0)))))
+           (and (= (ival-lo r) 1d0) (= (ival-hi r) 3d0))))
+  (format t "~&== exp / log ==~%")
+  (check "iv-exp of [0,1] covers [1, e]"
+         (let ((r (car (iv-exp (make-defined-cont 0d0 1d0)))))
+           (and (<= (ival-lo r) 1d0) (>= (ival-hi r) (exp 1d0)))))
+  (check "iv-log of [1,e] covers [0,1]"
+         (let* ((e-d (exp 1d0))
+                (r (car (iv-log (make-defined-cont 1d0 e-d)))))
+           (and (<= (ival-lo r) 0d0) (>= (ival-hi r) 1d0))))
+  (check "iv-log of [-1,4] has def-lo nil (straddles 0)"
+         (let ((r (car (iv-log (make-defined-cont -1d0 4d0)))))
+           (not (ival-def-lo r))))
+  (check "iv-log of [-2,-1] is undefined"
+         (let ((r (car (iv-log (make-defined-cont -2d0 -1d0)))))
+           (ival-totally-undefined-p r)))
   (check "iv-sin of [0, pi] hits 1"
          (let* ((pi-d (coerce pi 'double-float))
                 (r (car (iv-sin (make-defined-cont 0d0 pi-d)))))
