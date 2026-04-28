@@ -73,12 +73,9 @@
 (defun graph-formula (formula L R B Top width height
                       &key (max-subpixel-depth 4))
   "Returns a (HEIGHT x WIDTH) pixmap of :black / :white / :red."
-  (declare (type fixnum width height))
-  (let ((Ld (coerce L 'double-float))
-        (Rd (coerce R 'double-float))
-        (Bd (coerce B 'double-float))
-        (Td (coerce Top 'double-float))
-        (pixmap (make-array (list height width)
+  (declare (type fixnum width height)
+           (type double-float L R B Top))
+  (let ((pixmap (make-array (list height width)
                             :element-type '(unsigned-byte 8)
                             :initial-element +pixel-red+)))
     ;; Step 1: pyramid of pixel blocks, top-down.  Block size = power of 2.
@@ -86,9 +83,9 @@
                                              (<= (* s 2) height))
                                   do (setf s (* 2 s)))
                   s)))
-      (refine-blocks formula pixmap Ld Rd Bd Td width height bsz))
+      (refine-blocks formula pixmap L R B Top width height bsz))
     ;; Step 2: per-pixel subpixel refinement on remaining red pixels.
-    (refine-subpixels formula pixmap Ld Rd Bd Td width height
+    (refine-subpixels formula pixmap L R B Top width height
                       max-subpixel-depth)
     pixmap))
 
@@ -118,25 +115,25 @@
 
 (defun refine-blocks (formula pixmap L R B Top w h bsz)
   "Coarse-to-fine: process all blocks at size BSZ, then BSZ/2, etc., to 1."
-  (let ((blocks (initial-blocks w h bsz)))
-    (loop while blocks do
-      (let ((next '()))
-        (dolist (blk blocks)
-          (destructuring-bind (px-lo py-lo size) blk
-            (let* ((px-hi (min w (+ px-lo size)))
-                   (py-hi (min h (+ py-lo size))))
-              (unless (block-all-decided-p pixmap px-lo py-lo px-hi py-hi)
-                (multiple-value-bind (xl xh) (block-bounds-x px-lo px-hi w L R)
-                  (multiple-value-bind (yl yh) (block-bounds-y py-lo py-hi h B Top)
-                    (case (decide-cell formula xl xh yl yh)
-                      (:black (fill-block pixmap px-lo px-hi py-lo py-hi +pixel-black+))
-                      (:white (fill-block pixmap px-lo px-hi py-lo py-hi +pixel-white+))
-                      ;; :ivt or :undecided -> refine.  (IVT at block size > 1
-                      ;; cannot localize the solution, so we keep subdividing.)
-                      (otherwise
-                       (dolist (child (%quadrant-children px-lo py-lo size w h))
-                         (push child next))))))))))
-        (setf blocks next)))))
+  (loop for blocks = (initial-blocks w h bsz)
+                   then (loop for (px-lo py-lo size) in blocks
+                              nconc (refine-one-block formula pixmap
+                                                      px-lo py-lo size
+                                                      L R B Top w h))
+        while blocks))
+
+(defun refine-one-block (formula pixmap px-lo py-lo size L R B Top w h)
+  "Process one block; return a list of children to refine next, or NIL."
+  (let ((px-hi (min w (+ px-lo size)))
+        (py-hi (min h (+ py-lo size))))
+    (when (block-all-decided-p pixmap px-lo py-lo px-hi py-hi)
+      (return-from refine-one-block nil))
+    (multiple-value-bind (xl xh) (block-bounds-x px-lo px-hi w L R)
+      (multiple-value-bind (yl yh) (block-bounds-y py-lo py-hi h B Top)
+        (case (decide-cell formula xl xh yl yh)
+          (:black (fill-block pixmap px-lo px-hi py-lo py-hi +pixel-black+) nil)
+          (:white (fill-block pixmap px-lo px-hi py-lo py-hi +pixel-white+) nil)
+          (otherwise (%quadrant-children px-lo py-lo size w h)))))))
 
 ;;; --- subpixel pass -------------------------------------------------------
 
@@ -157,17 +154,17 @@
     (case decision
       (:black +pixel-black+)
       (:white +pixel-white+)
-      (:ivt   +pixel-black+)            ; <-- the asymmetry vs. block pass
+      (:ivt   +pixel-black+)
       (otherwise
-       (cond
-         ((<= depth 0) +pixel-red+)
-         (t (let* ((xm (* 0.5d0 (+ xl xh)))
-                   (ym (* 0.5d0 (+ yl yh)))
-                   (results
+       (if (<= depth 0)
+           +pixel-red+
+           (let* ((xm (* 0.5d0 (+ xl xh)))
+                  (ym (* 0.5d0 (+ yl yh)))
+                  (results
                     (list (subpixel-decide formula xl xm yl ym (1- depth))
                           (subpixel-decide formula xm xh yl ym (1- depth))
                           (subpixel-decide formula xl xm ym yh (1- depth))
                           (subpixel-decide formula xm xh ym yh (1- depth)))))
-              (cond ((some (lambda (c) (= c +pixel-black+)) results) +pixel-black+)
-                    ((every (lambda (c) (= c +pixel-white+)) results) +pixel-white+)
-                    (t +pixel-red+)))))))))
+             (cond ((some (lambda (c) (= c +pixel-black+)) results) +pixel-black+)
+                   ((every (lambda (c) (= c +pixel-white+)) results) +pixel-white+)
+                   (t +pixel-red+))))))))

@@ -4,10 +4,10 @@
 (defun pixel-rgb (byte)
   "Map a +pixel-*+ byte to an (R G B) vector."
   (declare (type (unsigned-byte 8) byte))
-  (cond ((= byte +pixel-black+) (vector   0   0   0))
-        ((= byte +pixel-white+) (vector 255 255 255))
-        ((= byte +pixel-red+)   (vector 220  60  60))
-        (t                      (vector 128 128 128))))
+  (cond ((= byte +pixel-black+) #.(vector   0   0   0))
+        ((= byte +pixel-white+) #.(vector 255 255 255))
+        ((= byte +pixel-red+)   #.(vector 220  60  60))
+        (t                      #.(vector 128 128 128))))
 
 (defun save-ppm (pixmap path &key (if-exists :supersede))
   "PIXMAP is (H x W) (unsigned-byte 8) array.  Writes PPM with y-up flip."
