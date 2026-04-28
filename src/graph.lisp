@@ -55,7 +55,8 @@
 ;;; rectangle as :black, :white, :ivt (existence proof - solution somewhere
 ;;; inside but not localized), or :undecided.  Both the block and subpixel
 ;;; passes use this same kernel; they differ only in how they treat :ivt
-;;; (block: refine; subpixel: paint :black).
+;;; (block: refine; subpixel: paint :black).  Algorithm 3.4 (CSE +
+;;; axis-only subexpression caching) would attach here; see plan.md.
 
 (defun decide-cell (formula xl xh yl yh)
   (let* ((xi (make-defined-cont xl xh))

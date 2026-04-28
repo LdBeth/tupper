@@ -11,10 +11,12 @@
 (defun combine-flags (&rest ivs)
   (values (every #'ival-def-lo  ivs)
           (every #'ival-def-hi  ivs)
-          (every #'ival-cont-lo ivs)))
+          (every #'ival-cont-lo ivs)
+          (reduce #'combine-branches ivs
+                  :key #'ival-branch :initial-value nil)))
 
-(defmacro with-combined-flags ((dl dh cl) ivs &body body)
-  `(multiple-value-bind (,dl ,dh ,cl) (apply #'combine-flags ,ivs)
+(defmacro with-combined-flags ((dl dh cl br) ivs &body body)
+  `(multiple-value-bind (,dl ,dh ,cl ,br) (apply #'combine-flags ,ivs)
      ,@body))
 
 (defun min4 (a b c d) (min a b c d))
@@ -30,19 +32,21 @@
              :cont-lo nil :cont-hi t))
 
 ;;; Defined-cont singleton at V (used by sgn).
-(defun make-singleton (v dl dh)
+(defun make-singleton (v dl dh &optional branch)
   (declare (type double-float v))
   (make-ival :lo v :hi v
              :def-lo dl :def-hi dh
-             :cont-lo dl :cont-hi dh))
+             :cont-lo dl :cont-hi dh
+             :branch branch))
 
-;;; preserve-flags: a -> ival with the same def/cont flags as A.
+;;; preserve-flags: a -> ival with the same def/cont/branch flags as A.
 (defmacro %preserve (a lo hi)
   (let ((g (gensym)))
     `(let ((,g ,a))
        (make-ival :lo ,lo :hi ,hi
                   :def-lo (ival-def-lo ,g) :def-hi (ival-def-hi ,g)
-                  :cont-lo (ival-cont-lo ,g) :cont-hi (ival-cont-hi ,g)))))
+                  :cont-lo (ival-cont-lo ,g) :cont-hi (ival-cont-hi ,g)
+                  :branch (ival-branch ,g)))))
 
 ;;; --- unary negation ------------------------------------------------------
 
@@ -52,10 +56,11 @@
 ;;; --- add / sub / mul (binary, share the flag-combining boilerplate) ------
 
 (defmacro %binary-result (a b lo hi)
-  `(with-combined-flags (dl dh cl) (list ,a ,b)
+  `(with-combined-flags (dl dh cl br) (list ,a ,b)
      (list (make-ival :lo ,lo :hi ,hi
                       :def-lo dl :def-hi dh
-                      :cont-lo cl :cont-hi t))))
+                      :cont-lo cl :cont-hi t
+                      :branch br))))
 
 (defun iv-add (a b)
   (%binary-result a b
@@ -89,10 +94,11 @@
   (multiple-value-bind (lo hi)
       (%corner-bounds #'div-down #'div-up
                       (ival-lo a) (ival-hi a) (ival-lo b) (ival-hi b))
-    (with-combined-flags (dl dh cl) (list a b)
+    (with-combined-flags (dl dh cl br) (list a b)
       (make-ival :lo lo :hi hi
                  :def-lo dl :def-hi dh
-                 :cont-lo cl :cont-hi t))))
+                 :cont-lo cl :cont-hi t
+                 :branch br))))
 
 (defun iv-div (a b)
   (cond
@@ -111,12 +117,14 @@
        (when (< bl 0d0)
          (let ((b- (make-ival :lo bl :hi (- eps)
                               :def-lo (ival-def-lo b) :def-hi (ival-def-hi b)
-                              :cont-lo nil :cont-hi t)))
+                              :cont-lo nil :cont-hi t
+                              :branch (ival-branch b))))
            (push (%iv-div-nozero a b-) results)))
        (when (> bh 0d0)
          (let ((b+ (make-ival :lo eps :hi bh
                               :def-lo (ival-def-lo b) :def-hi (ival-def-hi b)
-                              :cont-lo nil :cont-hi t)))
+                              :cont-lo nil :cont-hi t
+                              :branch (ival-branch b))))
            (push (%iv-div-nozero a b+) results)))
        ;; Denominator straddling 0 means the result is undefined exactly
        ;; at that point: stamp def-lo/cont-lo accordingly.
@@ -138,7 +146,8 @@
       (t
        (list (make-ival :lo 0d0 :hi (sqrt-up ah)
                         :def-lo nil :def-hi (ival-def-hi a)
-                        :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a)))))))
+                        :cont-lo (ival-cont-lo a) :cont-hi (ival-cont-hi a)
+                        :branch (ival-branch a)))))))
 
 ;;; --- abs -----------------------------------------------------------------
 
@@ -169,7 +178,8 @@
        (list (make-ival :lo +neg-inf+
                         :hi (trans-up (log ah))
                         :def-lo nil :def-hi (ival-def-hi a)
-                        :cont-lo nil :cont-hi t))))))
+                        :cont-lo nil :cont-hi t
+                        :branch (ival-branch a)))))))
 
 ;;; --- sin / cos / tan -----------------------------------------------------
 ;;; sin and cos share a scaffold: a period-guard, endpoint init, and a scan
@@ -244,12 +254,14 @@
                         (make-ival :lo (trans-down (tan (car seg)))
                                    :hi (trans-up   (tan (cdr seg)))
                                    :def-lo nil :def-hi (ival-def-hi a)
-                                   :cont-lo nil :cont-hi t))
+                                   :cont-lo nil :cont-hi t
+                                   :branch (ival-branch a)))
                       (nreverse segments))))))))))
 
 ;;; --- pow -----------------------------------------------------------------
 ;;; Limited support: integer exponents (any base) and real exponents on
-;;; positive bases.  Algorithm 3.3 (parity tagging) is left unimplemented.
+;;; positive bases.  Algorithm 3.3 (parity tagging) is left unimplemented;
+;;; see plan.md Group C.
 
 (defun %iv-int-pow (a n)
   (let ((al (ival-lo a)) (ah (ival-hi a)))
@@ -293,18 +305,20 @@
 ;;; binary ops).
 
 (defun iv-min (a b)
-  (with-combined-flags (dl dh cl) (list a b)
+  (with-combined-flags (dl dh cl br) (list a b)
     (list (make-ival :lo (min (ival-lo a) (ival-lo b))
                      :hi (min (ival-hi a) (ival-hi b))
                      :def-lo dl :def-hi dh
-                     :cont-lo cl :cont-hi t))))
+                     :cont-lo cl :cont-hi t
+                     :branch br))))
 
 (defun iv-max (a b)
-  (with-combined-flags (dl dh cl) (list a b)
+  (with-combined-flags (dl dh cl br) (list a b)
     (list (make-ival :lo (max (ival-lo a) (ival-lo b))
                      :hi (max (ival-hi a) (ival-hi b))
                      :def-lo dl :def-hi dh
-                     :cont-lo cl :cont-hi t))))
+                     :cont-lo cl :cont-hi t
+                     :branch br))))
 
 ;;; --- median (3-arg) ------------------------------------------------------
 ;;; median(a,b,c) = a + b + c - min(a,b,c) - max(a,b,c).  The bound is the
@@ -325,10 +339,11 @@
           (let ((m (%median3 xa xb xc)))
             (when (< m vmin) (setf vmin m))
             (when (> m vmax) (setf vmax m))))))
-    (with-combined-flags (dl dh cl) (list a b c)
+    (with-combined-flags (dl dh cl br) (list a b c)
       (list (make-ival :lo vmin :hi vmax
                        :def-lo dl :def-hi dh
-                       :cont-lo cl :cont-hi t)))))
+                       :cont-lo cl :cont-hi t
+                       :branch br)))))
 
 ;;; --- floor / ceil / round / trunc ---------------------------------------
 ;;; All four are step functions; the implementation pattern is from the paper
@@ -341,7 +356,8 @@
   (let ((lo (ival-lo iv))
         (hi (ival-hi iv))
         (dl (ival-def-lo iv))
-        (dh (ival-def-hi iv)))
+        (dh (ival-def-hi iv))
+        (br (ival-branch iv)))
     (declare (type double-float lo hi))
     (cond
       ((or (= lo +neg-inf+) (= hi +pos-inf+))
@@ -354,18 +370,22 @@
            ((= flo fhi)
             (list (make-ival :lo flo :hi flo
                              :def-lo dl :def-hi dh
-                             :cont-lo dl :cont-hi dh)))
+                             :cont-lo dl :cont-hi dh
+                             :branch br)))
            ((= (- fhi flo) 1d0)
             (list (make-ival :lo flo :hi flo
                              :def-lo nil :def-hi dh
-                             :cont-lo nil :cont-hi dh)
+                             :cont-lo nil :cont-hi dh
+                             :branch br)
                   (make-ival :lo fhi :hi fhi
                              :def-lo nil :def-hi dh
-                             :cont-lo nil :cont-hi dh)))
+                             :cont-lo nil :cont-hi dh
+                             :branch br)))
            (t
             (list (make-ival :lo flo :hi fhi
                              :def-lo dl :def-hi dh
-                             :cont-lo nil :cont-hi dh)))))))))
+                             :cont-lo nil :cont-hi dh
+                             :branch br)))))))))
 
 (defun %ffloor1 (x) (declare (type double-float x)) (values (ffloor x)))
 (defun %fceil1  (x) (declare (type double-float x)) (values (fceiling x)))
@@ -389,18 +409,19 @@
   (let ((lo (ival-lo iv))
         (hi (ival-hi iv))
         (dl (ival-def-lo iv))
-        (dh (ival-def-hi iv)))
+        (dh (ival-def-hi iv))
+        (br (ival-branch iv)))
     (declare (type double-float lo hi))
     (cond
-      ((< hi 0d0) (list (make-singleton -1d0 dl dh)))
-      ((> lo 0d0) (list (make-singleton  1d0 dl dh)))
-      ((and (= lo 0d0) (= hi 0d0)) (list (make-singleton 0d0 dl dh)))
+      ((< hi 0d0) (list (make-singleton -1d0 dl dh br)))
+      ((> lo 0d0) (list (make-singleton  1d0 dl dh br)))
+      ((and (= lo 0d0) (= hi 0d0)) (list (make-singleton 0d0 dl dh br)))
       (t
        ;;; make-singleton v nil dh expands to the same make-ival call; use it.
        (loop for (include val) in `((,(< lo 0d0) -1d0)
                                     (t            0d0)
                                     (,(> hi 0d0)  1d0))
-             when include collect (make-singleton val nil dh))))))
+             when include collect (make-singleton val nil dh br))))))
 
 ;;; --- mod -----------------------------------------------------------------
 ;;; iv-mod a b = a - b * floor(a/b), composed via the existing set-aware
