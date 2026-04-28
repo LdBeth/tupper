@@ -8,4 +8,6 @@
            #:eval-formula
            #:+pixel-black+
            #:+pixel-white+
-           #:+pixel-red+))
+           #:+pixel-red+
+           #:x
+           #:y))

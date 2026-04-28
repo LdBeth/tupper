@@ -13,6 +13,10 @@
                  -10d0 10d0 -10d0 10d0  512 512)
     ("sin=cos"   (= (sin x) (cos y))
                  -10d0 10d0 -10d0 10d0  256 256)
+    ("fig5a"     (> (- (cos (cos (min (+ (sin x) y) (+ x (sin y)))))
+                       (cos (sin (max (+ (sin y) x) (+ y (sin x))))))
+                  0)
+                 -10d0 10d0 -10d0 10d0 512 512)
     ;; Day-1 extension demos (groups A + B):
     ("floor"     (= y (floor x))
                  -4d0 4d0 -4d0 4d0  256 256)
@@ -28,7 +32,7 @@
     (force-output)
     (let* ((t0 (get-internal-real-time))
            (pixmap (graph-formula formula L R B Top w h
-                                  :max-subpixel-depth 4))
+                                  :max-subpixel-depth 0))
            (path (format nil "~a~a.ppm" out-dir name)))
       (save-ppm pixmap path)
       (format t " done in ~,2fs -> ~a~%"
