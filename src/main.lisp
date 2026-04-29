@@ -27,7 +27,14 @@
     ("sgn-sin"   (= y (sgn (sin x)))
                  -10d0 10d0 -2d0 2d0  256 128)
     ("min-eq"    (= (min x y) 1)
-                 -3d0 3d0 -3d0 3d0  256 256)))
+                 -3d0 3d0 -3d0 3d0  256 256)
+    ;; Day-2 extension demos (groups C + D + F):
+    ("arctan"    (= y (arctan x))
+                 -5d0 5d0 -5d0 5d0  256 256)
+    ("cuberoot"  (= y (^ x 1/3))
+                 -2d0 3d0 -2d0 3d0  256 256)
+    ("gamma"     (= y (gamma x))
+                 -4d0 5d0 -4d0 5d0  256 256)))
 
 (defun run-example (entry &key (out-dir "out/"))
   (destructuring-bind (name formula L R B Top w h) entry

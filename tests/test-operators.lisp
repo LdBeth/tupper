@@ -322,5 +322,168 @@
                        (list (make-defined-cont 10d0 10d0)
                              (make-defined-cont 20d0 20d0))))))
 
+  ;;; ---------------------------------------------------------------------
+  ;;; Day-2 extension tests (Groups C + D + F)
+  ;;; ---------------------------------------------------------------------
+
+  (format t "~&== nth-root ==~%")
+  (check "iv-nth-root 3 [8, 27] covers [2, 3]"
+         (let ((r (iv-nth-root 3 (make-defined-cont 8d0 27d0))))
+           (and (= 1 (length r))
+                (<= (ival-lo (first r)) 2d0)
+                (>= (ival-hi (first r)) 3d0))))
+  (check "iv-nth-root 3 [-27, -8] covers [-3, -2] (odd, sign-preserving)"
+         (let ((r (iv-nth-root 3 (make-defined-cont -27d0 -8d0))))
+           (and (= 1 (length r))
+                (<= (ival-lo (first r)) -3d0)
+                (>= (ival-hi (first r)) -2d0))))
+  (check "iv-nth-root 3 [-8, 8] spans [-2, 2] (zero-crossing odd root)"
+         (let ((r (iv-nth-root 3 (make-defined-cont -8d0 8d0))))
+           (and (<= (ival-lo (first r)) -2d0)
+                (>= (ival-hi (first r))  2d0))))
+  (check "iv-nth-root 2 [4, 9] covers [2, 3]"
+         (let ((r (iv-nth-root 2 (make-defined-cont 4d0 9d0))))
+           (and (<= (ival-lo (first r)) 2d0)
+                (>= (ival-hi (first r)) 3d0))))
+  (check "iv-nth-root 2 [-4, -1] is undefined"
+         (let ((r (iv-nth-root 2 (make-defined-cont -4d0 -1d0))))
+           (and (= 1 (length r))
+                (ival-totally-undefined-p (first r)))))
+  (check "iv-nth-root 2 [-1, 4] partial: def<F,T>, lo>=0"
+         (let ((r (iv-nth-root 2 (make-defined-cont -1d0 4d0))))
+           (and (= 1 (length r))
+                (>= (ival-lo (first r)) 0d0)
+                (not (ival-def-lo (first r)))
+                (ival-def-hi (first r)))))
+
+  (format t "~&== rational pow (parity) ==~%")
+  (check "(^ -8 1/3) = -2 (negative base, odd den, odd num)"
+         (let ((r (eval-expr '(^ x 1/3)
+                             (make-defined-cont -8d0 -8d0)
+                             (make-defined-cont 0d0 0d0))))
+           (and (= 1 (length r))
+                (<= (ival-lo (first r)) -2d0)
+                (>= (ival-hi (first r)) -2d0))))
+  (check "(^ -8 2/3) covers 4 (negative base, odd den, even num)"
+         (let ((r (eval-expr '(^ x 2/3)
+                             (make-defined-cont -8d0 -8d0)
+                             (make-defined-cont 0d0 0d0))))
+           (and (= 1 (length r))
+                (<= (ival-lo (first r)) 4d0)
+                (>= (ival-hi (first r)) 4d0))))
+  (check "(^ x 1/3) at x=[-8,8] spans [-2, 2]"
+         (let* ((rs (eval-expr '(^ x 1/3)
+                              (make-defined-cont -8d0 8d0)
+                              (make-defined-cont 0d0 0d0)))
+                (lo (reduce #'min rs :key #'ival-lo))
+                (hi (reduce #'max rs :key #'ival-hi)))
+           (and (<= lo -2d0) (>= hi 2d0))))
+  (check "(^ x (/ 1 3)) parses parity tag"
+         ;; (/ 1 3) is the explicit-division form.
+         (let ((r (eval-expr '(^ x (/ 1 3))
+                             (make-defined-cont -8d0 -8d0)
+                             (make-defined-cont 0d0 0d0))))
+           (and (<= (ival-lo (first r)) -2d0)
+                (>= (ival-hi (first r)) -2d0))))
+
+  (format t "~&== inverse trig ==~%")
+  (check "iv-arcsin([0, 1]) = [0, pi/2]"
+         (let ((r (iv-arcsin (make-defined-cont 0d0 1d0))))
+           (and (= 1 (length r))
+                (<= (ival-lo (first r)) 0d0)
+                (>= (ival-hi (first r))
+                    (* 0.5d0 (coerce pi 'double-float))))))
+  (check "iv-arcsin([-2, 0.5]) clips: def<F,T>, hi >= asin(0.5)"
+         (let ((r (iv-arcsin (make-defined-cont -2d0 0.5d0))))
+           (and (= 1 (length r))
+                (not (ival-def-lo (first r)))
+                (>= (ival-hi (first r)) (asin 0.5d0)))))
+  (check "iv-arcsin([2, 3]) wholly outside domain -> undefined"
+         (let ((r (iv-arcsin (make-defined-cont 2d0 3d0))))
+           (and (= 1 (length r))
+                (ival-totally-undefined-p (first r)))))
+  (check "iv-arccos([0, 1]) = [0, pi/2]"
+         (let ((r (iv-arccos (make-defined-cont 0d0 1d0))))
+           (and (<= (ival-lo (first r)) 0d0)
+                (>= (ival-hi (first r))
+                    (* 0.5d0 (coerce pi 'double-float))))))
+  (check "iv-arccos([-1, 1]) covers [0, pi]"
+         (let ((r (iv-arccos (make-defined-cont -1d0 1d0))))
+           (and (<= (ival-lo (first r)) 0d0)
+                (>= (ival-hi (first r)) (coerce pi 'double-float)))))
+  (check "iv-arctan([0, 1]) covers [0, pi/4]"
+         (let ((r (iv-arctan (make-defined-cont 0d0 1d0))))
+           (and (<= (ival-lo (first r)) 0d0)
+                (>= (ival-hi (first r))
+                    (atan 1d0)))))
+  (check "iv-arctan(R) bounded by [-pi/2, pi/2]"
+         (let ((r (iv-arctan (make-ival :lo +neg-inf+ :hi +pos-inf+
+                                        :def-lo t :def-hi t
+                                        :cont-lo t :cont-hi t)))
+               (half-pi (+ (* 0.5d0 (coerce pi 'double-float)) 1d-9)))
+           (and (>= (ival-lo (first r)) (- half-pi))
+                (<= (ival-hi (first r)) half-pi)
+                (<= (ival-lo (first r)) 0d0)
+                (>= (ival-hi (first r)) 0d0))))
+  (check "iv-arccot R has lo>=0, hi<=pi"
+         (let ((r (iv-arccot (make-defined-cont -100d0 100d0))))
+           (and (>= (ival-lo (first r)) 0d0)
+                (<= (ival-hi (first r))
+                    (+ (coerce pi 'double-float) 1d-9)))))
+  (check "iv-arccsc([2, 5]) covers arcsin(1/5)..arcsin(1/2)"
+         (let* ((rs (iv-arccsc (make-defined-cont 2d0 5d0)))
+                (lo (reduce #'min rs :key #'ival-lo))
+                (hi (reduce #'max rs :key #'ival-hi)))
+           (and (<= lo (asin (/ 1d0 5d0)))
+                (>= hi (asin 0.5d0)))))
+  (check "(arctan x) dispatch via formula"
+         (let ((r (eval-expr '(arctan x)
+                             (make-defined-cont 1d0 1d0)
+                             (make-defined-cont 0d0 0d0))))
+           (and (<= (ival-lo (first r)) (atan 1d0))
+                (>= (ival-hi (first r)) (atan 1d0)))))
+
+  (format t "~&== gamma / factorial ==~%")
+  (check "gamma([1, 2]) covers [gamma_min, 1]"
+         ;; gamma is in [~0.8856, 1] on [1, 2]; min near x=1.4616.
+         (let ((r (iv-gamma (make-defined-cont 1d0 2d0))))
+           (and (= 1 (length r))
+                (<= (ival-lo (first r)) 0.8857d0)
+                (>= (ival-hi (first r)) 1d0))))
+  (check "gamma(5) covers 24"
+         (let ((r (iv-gamma (make-defined-cont 5d0 5d0))))
+           (and (<= (ival-lo (first r)) 24d0)
+                (>= (ival-hi (first r)) 24d0))))
+  (check "gamma straddling pole at 0 returns widened"
+         (let ((r (iv-gamma (make-defined-cont -0.5d0 0.5d0))))
+           (and (= (ival-lo (first r)) +neg-inf+)
+                (= (ival-hi (first r)) +pos-inf+)
+                (not (ival-def-lo (first r)))
+                (not (ival-cont-lo (first r))))))
+  (check "gamma straddling pole at -1 returns widened"
+         (let ((r (iv-gamma (make-defined-cont -1.5d0 -0.5d0))))
+           (and (= (ival-lo (first r)) +neg-inf+)
+                (= (ival-hi (first r)) +pos-inf+)
+                (not (ival-def-lo (first r))))))
+  (check "factorial(5) covers 120"
+         (let ((r (iv-factorial (make-defined-cont 5d0 5d0))))
+           (and (<= (ival-lo (first r)) 120d0)
+                (>= (ival-hi (first r)) 120d0))))
+  (check "factorial of non-integer-bounds marks def-lo nil"
+         (let ((r (iv-factorial (make-defined-cont 1d0 2d0))))
+           (notany #'ival-def-lo r)))
+  (check "(gamma x) dispatch at x=2 covers 1"
+         (let ((r (eval-expr '(gamma x)
+                             (make-defined-cont 2d0 2d0)
+                             (make-defined-cont 0d0 0d0))))
+           (and (<= (ival-lo (first r)) 1d0)
+                (>= (ival-hi (first r)) 1d0))))
+  (check "(! x) dispatch at x=4 covers 24"
+         (let ((r (eval-expr '(! x)
+                             (make-defined-cont 4d0 4d0)
+                             (make-defined-cont 0d0 0d0))))
+           (and (<= (ival-lo (first r)) 24d0)
+                (>= (ival-hi (first r)) 24d0))))
+
   (format t "~&Failures: ~a~%" *fail-count*)
   (zerop *fail-count*))

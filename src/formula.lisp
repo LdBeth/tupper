@@ -28,13 +28,43 @@
     (log      . ,#'iv-log)   (exp      . ,#'iv-exp)
     (floor    . ,#'iv-floor) (ceiling  . ,#'iv-ceil)
     (round    . ,#'iv-round) (truncate . ,#'iv-trunc)
-    (sgn      . ,#'iv-sgn)))
+    (sgn      . ,#'iv-sgn)
+    ;; Group D: inverse trig principal branches; a*/arc* are aliases.
+    (arcsin   . ,#'iv-arcsin) (arccos . ,#'iv-arccos)
+    (arctan   . ,#'iv-arctan) (arccsc . ,#'iv-arccsc)
+    (arcsec   . ,#'iv-arcsec) (arccot . ,#'iv-arccot)
+    (asin     . ,#'iv-arcsin) (acos   . ,#'iv-arccos)
+    (atan     . ,#'iv-arctan) (acsc   . ,#'iv-arccsc)
+    (asec     . ,#'iv-arcsec) (acot   . ,#'iv-arccot)
+    ;; Group F: special functions
+    (gamma    . ,#'iv-gamma)
+    (factorial . ,#'iv-factorial)
+    (!        . ,#'iv-factorial)))
 
 (defparameter *binary-ops*
-  `((/    . ,#'iv-div)
-    (^    . ,#'iv-pow)
-    (expt . ,#'iv-pow)
-    (mod  . ,#'iv-mod)))
+  `((/        . ,#'iv-div)
+    (mod      . ,#'iv-mod)))
+
+;;; ^ / expt and nth-root use a special dispatch path below: the parser
+;;; peeks at the literal exponent / N to extract parity / integer info
+;;; before routing through ivs-apply-binary.
+
+(defun %literal-rational-parity (expr)
+  "If EXPR is a rational literal or (/ P Q) form, return plist
+   (:num P :den Q :num-odd ON :den-odd OD); else NIL."
+  (cond
+    ((and (rationalp expr) (not (floatp expr)))
+     (let ((num (numerator expr)) (den (denominator expr)))
+       (list :num num :den den
+             :num-odd (oddp num) :den-odd (oddp den))))
+    ((and (consp expr) (eq (car expr) '/)
+          (= 3 (length expr))
+          (integerp (second expr)) (integerp (third expr))
+          (not (zerop (third expr))))
+     (let ((num (second expr)) (den (third expr)))
+       (list :num num :den den
+             :num-odd (oddp num) :den-odd (oddp den))))
+    (t nil)))
 
 (defun eval-expr (expr x y)
   "EXPR is an s-expression (or X/Y/number).  Returns a list of ivals."
@@ -70,6 +100,32 @@
                                        (eval-expr (first args) x y)
                                        (eval-expr (second args) x y)
                                        (eval-expr (third args) x y)))
+            ;; ^ / expt: parser-side parity tag for rational exponents.  If
+            ;; the exponent is a literal *non-integer* rational p/q the
+            ;; AST-side helper extracts (:num :den :num-odd :den-odd);
+            ;; iv-pow uses that to evaluate exactly on negative bases
+            ;; (Algorithm 3.3 lite).  For integer exponents we fall through
+            ;; to the existing iv-pow path (parity ignored) -- this preserves
+            ;; bit-identity for the reference examples.
+            ((^ expt)
+             (let* ((base-set (eval-expr (first args)  x y))
+                    (exp-set  (eval-expr (second args) x y))
+                    (parity   (%literal-rational-parity (second args))))
+               (cond
+                 ((and parity (> (getf parity :den) 1))
+                  (ivs-apply-binary
+                   (lambda (a b) (iv-pow a b parity))
+                   base-set exp-set))
+                 (t
+                  (ivs-apply-binary #'iv-pow base-set exp-set)))))
+            ;; nth-root takes a literal integer N and one ival X.
+            (nth-root
+             (unless (and (= 2 (length args)) (integerp (first args)))
+               (error "nth-root expects (nth-root N X) with integer N"))
+             (ivs-apply-unary
+              (let ((n (first args)))
+                (lambda (iv) (iv-nth-root n iv)))
+              (eval-expr (second args) x y)))
             (t (error "Unknown operator: ~a" op)))))))
     (t (error "Bad expression: ~a" expr))))
 
