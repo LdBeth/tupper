@@ -23,11 +23,6 @@
    bits to distinguish its three pieces (-1, 0, +1); the others
    produce at most 2 pieces and need 1 bit.")
 
-(defun strip-site-tag (args)
-  "Remove a trailing :site N pair from an arg list, if present."
-  (let ((p (position :site args)))
-    (if p (subseq args 0 p) args)))
-
 (defun assign-sites (formula)
   "Walk FORMULA and rewrite every branch-cutting node to carry a
    trailing :site N tag.  Two nodes with equal head and equal arg
@@ -48,7 +43,7 @@
                     (rewrite `(- ,a (* ,b (floor (/ ,a ,b)))))))
                  (t
                   (let* ((head      (car node))
-                         (clean     (strip-site-tag (cdr node)))
+                         (clean     (nth-value 0 (%extract-site (cdr node))))
                          (rec-args  (mapcar #'rewrite clean)))
                     (cond
                       ((member head *branch-cutting-ops*)
@@ -58,6 +53,6 @@
                                               (prog1 next
                                                 (incf next
                                                       (cdr (assoc head *ops-arity*))))))))
-                         (append (cons head rec-args) (list :site site))))
+                         `(,head ,@rec-args :site ,site)))
                       (t (cons head rec-args))))))))
       (values (rewrite formula) next))))

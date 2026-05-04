@@ -39,6 +39,17 @@
              :cont-lo dl :cont-hi dh
              :branch branch))
 
+;;; Branch-cut piece tagger (Algorithm 3.2): combine IV's existing branch
+;;; with a (mask . piece-index<<site) tag.  When SITE is NIL the iv is
+;;; returned untouched -- this is the back-compat path for ops called
+;;; without a site allocation.  Returns IV for chaining.
+(defun %tag-piece! (iv mask site piece-index)
+  (when site
+    (setf (ival-branch iv)
+          (combine-branches (ival-branch iv)
+                            (cons mask (ash piece-index site)))))
+  iv)
+
 ;;; preserve-flags: a -> ival with the same def/cont/branch flags as A.
 (defmacro %preserve (a lo hi)
   (let ((g (gensym)))
@@ -128,19 +139,16 @@
                               :branch (ival-branch b))))
            (push (%iv-div-nozero a b+) results)))
        ;; Denominator straddling 0 means the result is undefined exactly
-       ;; at that point: stamp def-lo/cont-lo accordingly, then tag with
-       ;; site bits (negative-half = chosen 0; positive-half = chosen 1).
+       ;; at that point.  Site tag is meaningful only when both halves
+       ;; survive (the cut is between them); a single-half result is
+       ;; just a restriction with no branching choice to record.
        (let* ((ordered (nreverse results))
-              (n (length ordered)))
+              (cut-p  (= (length ordered) 2)))
          (loop for iv in ordered
                for i from 0
                do (setf (ival-def-lo iv) nil
                         (ival-cont-lo iv) nil)
-                  (when (and site (= n 2))
-                    (let ((br (combine-branches
-                               (ival-branch iv)
-                               (cons mask (if (zerop i) 0 mask)))))
-                      (setf (ival-branch iv) br))))
+                  (when cut-p (%tag-piece! iv mask site i)))
          ordered)))))
 
 ;;; --- sqrt ----------------------------------------------------------------
@@ -260,28 +268,21 @@
                       (push (cons left asym) segments)
                       (setf left asym))
               (push (cons left ah) segments)
+              ;; Single-segment results don't represent a cut, so site
+              ;; tagging only kicks in when there are >=2 pieces.
               (let* ((ordered (nreverse segments))
-                     (mask (and site (ash 1 site)))
-                     (pieces
-                       (loop for seg in ordered
-                             for i from 0
-                             collect
-                             (let ((iv (make-ival
-                                        :lo (trans-down (tan (car seg)))
-                                        :hi (trans-up   (tan (cdr seg)))
-                                        :def-lo nil :def-hi (ival-def-hi a)
-                                        :cont-lo nil :cont-hi t
-                                        :branch (ival-branch a)))
-                                   (br-add (when (and site
-                                                      (>= (length ordered) 2))
-                                             (cons mask
-                                                   (if (zerop i) 0 mask)))))
-                               (when br-add
-                                 (setf (ival-branch iv)
-                                       (combine-branches
-                                        (ival-branch iv) br-add)))
-                               iv))))
-                pieces)))))))))
+                     (cut-p  (>= (length ordered) 2))
+                     (mask   (and site (ash 1 site))))
+                (loop for seg in ordered
+                      for i from 0
+                      collect
+                      (let ((iv (make-ival
+                                 :lo (trans-down (tan (car seg)))
+                                 :hi (trans-up   (tan (cdr seg)))
+                                 :def-lo nil :def-hi (ival-def-hi a)
+                                 :cont-lo nil :cont-hi t
+                                 :branch (ival-branch a))))
+                        (if cut-p (%tag-piece! iv mask site i) iv))))))))))))
 
 ;;; --- pow -----------------------------------------------------------------
 ;;; Integer exponents (any base) and real exponents on positive bases handled
@@ -379,32 +380,30 @@
          (declare (type double-float flo fhi))
          (cond
            ((= flo fhi)
-            ;; Singleton-step case: no cut performed; preserve input branch.
             (list (make-ival :lo flo :hi flo
                              :def-lo dl :def-hi dh
                              :cont-lo dl :cont-hi dh
                              :branch br)))
            ((= (- fhi flo) 1d0)
-            ;; Two-piece cut: tag piece 0 with chosen=0, piece 1 with
-            ;; chosen=(ash 1 site).  Untagged when SITE is NIL.
             ;; Each piece is well-defined on its subdomain; the branch
-            ;; tag (not the def flag) encodes the domain restriction.
-            ;; cmp-sets filters by branch compatibility to prevent
-            ;; cross-branch false positives.
-            (let* ((mask (and site (ash 1 site)))
-                   (br0  (if site (combine-branches br (cons mask 0))    br))
-                   (br1  (if site (combine-branches br (cons mask mask)) br)))
-              (list (make-ival :lo flo :hi flo
-                               :def-lo dl :def-hi dh
-                               :cont-lo nil :cont-hi dh
-                               :branch br0)
-                    (make-ival :lo fhi :hi fhi
-                               :def-lo dl :def-hi dh
-                               :cont-lo nil :cont-hi dh
-                               :branch br1))))
+            ;; tag (not the def flag) encodes the domain restriction so
+            ;; cmp-sets can drop cross-branch comparisons.
+            (let ((mask (and site (ash 1 site))))
+              (list (%tag-piece!
+                     (make-ival :lo flo :hi flo
+                                :def-lo dl :def-hi dh
+                                :cont-lo nil :cont-hi dh
+                                :branch br)
+                     mask site 0)
+                    (%tag-piece!
+                     (make-ival :lo fhi :hi fhi
+                                :def-lo dl :def-hi dh
+                                :cont-lo nil :cont-hi dh
+                                :branch br)
+                     mask site 1))))
+           ;; Hull case (>1 step): result spans many cuts; no per-piece
+           ;; distinction is available, so preserve input branch verbatim.
            (t
-            ;; Hull case (>1 step): result spans many cuts; conservatively
-            ;; preserve input branch -- no per-piece distinction available.
             (list (make-ival :lo flo :hi fhi
                              :def-lo dl :def-hi dh
                              :cont-lo nil :cont-hi dh
@@ -424,15 +423,10 @@
 (defun iv-trunc (iv &optional site) (%iv-step iv #'%ftrunc1 site))
 
 ;;; --- sgn -----------------------------------------------------------------
-;;; Three-valued: -1, 0, +1.  When the input straddles 0 the result is an
-;;; interval set covering the relevant subset of {-1, 0, 1}, with cont-lo
-;;; cleared (sgn is discontinuous at 0).
-
-;;; sgn: three-valued: -1, 0, +1.  When the input straddles 0 the result
-;;; is an interval set covering the relevant subset of {-1, 0, 1}, with
-;;; cont-lo cleared (sgn is discontinuous at 0).  Branch tagging
-;;; (Algorithm 3.2) reserves 2 bit-positions per occurrence (site, site+1)
-;;; encoding pieces -1, 0, +1 as chosen-bits 00, 01, 10 respectively.
+;;; Three-valued: -1, 0, +1.  Straddling 0 returns the relevant subset of
+;;; {-1, 0, 1} with cont-lo cleared (sgn is discontinuous at 0).  Branch
+;;; tagging (Algorithm 3.2) reserves 2 bits per occurrence encoding the
+;;; pieces -1 / 0 / +1 as piece-indices 0 / 1 / 2.
 
 (defun iv-sgn (iv &optional site)
   (let ((lo (ival-lo iv))
@@ -446,27 +440,15 @@
       ((> lo 0d0) (list (make-singleton  1d0 dl dh br)))
       ((and (= lo 0d0) (= hi 0d0)) (list (make-singleton 0d0 dl dh br)))
       (t
-       (let ((mask (and site (ash 3 site)))
-             (pieces '()))
-         (when (< lo 0d0)
-           (let ((iv (make-singleton -1d0 nil dh br)))
-             (when site
-               (setf (ival-branch iv)
-                     (combine-branches br (cons mask 0))))
-             (push iv pieces)))
-         ;; The 0 piece is always included in the straddle case.
-         (let ((iv (make-singleton 0d0 nil dh br)))
-           (when site
-             (setf (ival-branch iv)
-                   (combine-branches br (cons mask (ash 1 site)))))
-           (push iv pieces))
-         (when (> hi 0d0)
-           (let ((iv (make-singleton 1d0 nil dh br)))
-             (when site
-               (setf (ival-branch iv)
-                     (combine-branches br (cons mask (ash 2 site)))))
-             (push iv pieces)))
-         (nreverse pieces))))))
+       ;; The 0 piece is always included in the straddle case; the -1 and
+       ;; +1 pieces are conditional on the input crossing zero each way.
+       (let ((mask (and site (ash 3 site))))
+         (loop for (include val piece) in `((,(< lo 0d0) -1d0 0)
+                                            (t            0d0 1)
+                                            (,(> hi 0d0)  1d0 2))
+               when include
+                 collect (%tag-piece! (make-singleton val nil dh br)
+                                      mask site piece)))))))
 
 ;;; --- nth-root ------------------------------------------------------------
 ;;; iv-nth-root N X: real nth-root.  N is a positive integer.

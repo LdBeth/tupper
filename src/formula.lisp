@@ -44,20 +44,19 @@
 (defparameter *binary-ops*
   `((/        . ,#'iv-div)))
 
-;;; Branch-cutting ops (Algorithm 3.2): these consume a trailing
-;;; (:site N) keyword pair on their AST arg list, attached by
-;;; assign-sites at graph-formula entry.  When :site is absent they
-;;; behave as before (untagged output).
-(defparameter *sited-ops*
-  '(floor ceiling round truncate sgn tan /)
-  "Operators whose AST args may carry a trailing :site N keyword.")
+;;; Algorithm 3.2: branch-cutting ops carry a trailing (:site N) keyword
+;;; pair attached by assign-sites at graph-formula entry; %extract-site
+;;; peels it off and threads N into the operator as a second argument.
+;;; Non-branch-cutting ops never receive :site, so the extractor is a
+;;; no-op (returns args, NIL) for them; this is cheaper than gating on
+;;; an op-membership test in the per-pixel hot path.
 
 (defun %extract-site (args)
   "Return (values plain-args site-or-nil) splitting off a trailing
    :site N pair if present."
   (let ((p (position :site args)))
     (if p
-        (values (subseq args 0 p) (getf (nthcdr p args) :site))
+        (values (subseq args 0 p) (nth (1+ p) args))
         (values args nil))))
 
 ;;; ^ / expt and nth-root use a special dispatch path below: the parser
@@ -90,72 +89,62 @@
     ((symbolp expr)
      (error "Unknown variable in expression: ~a" expr))
     ((consp expr)
-     (let* ((op (car expr))
-            (raw-args (cdr expr)))
-       (multiple-value-bind (args site)
-           (if (member op *sited-ops*)
-               (%extract-site raw-args)
-               (values raw-args nil))
-         (let* ((u (cdr (assoc op *unary-ops*)))
-                (b (cdr (assoc op *binary-ops*))))
-           (cond
-             (u (let ((ufn u))
-                  (ivs-apply-unary
-                   (if site
-                       (lambda (iv) (funcall ufn iv site))
-                       ufn)
-                   (eval-expr (first args) x y))))
-             (b (let ((bfn b))
-                  (ivs-apply-binary
-                   (if site
-                       (lambda (av bv) (funcall bfn av bv site))
-                       bfn)
-                   (eval-expr (first args) x y)
-                   (eval-expr (second args) x y))))
-             (t
-              (case op
-            (+ (%n-ary #'iv-add 0 args x y))
-            (* (%n-ary #'iv-mul 1 args x y))
-            (- (cond ((null args) (error "(-) with no args"))
-                     ((null (cdr args))
-                      (ivs-apply-unary #'iv-neg (eval-expr (car args) x y)))
-                     (t (%n-ary #'iv-sub 0 args x y))))
-            (min (%n-ary #'iv-min nil args x y))
-            (max (%n-ary #'iv-max nil args x y))
-            (median (unless (= 3 (length args))
-                      (error "median expects exactly 3 args, got ~a"
-                             (length args)))
-                    (ivs-apply-ternary #'iv-median
-                                       (eval-expr (first args) x y)
-                                       (eval-expr (second args) x y)
-                                       (eval-expr (third args) x y)))
-            ;; ^ / expt: parser-side parity tag for rational exponents.  If
-            ;; the exponent is a literal *non-integer* rational p/q the
-            ;; AST-side helper extracts (:num :den :num-odd :den-odd);
-            ;; iv-pow uses that to evaluate exactly on negative bases
-            ;; (Algorithm 3.3 lite).  For integer exponents we fall through
-            ;; to the existing iv-pow path (parity ignored) -- this preserves
-            ;; bit-identity for the reference examples.
-            ((^ expt)
-             (let* ((base-set (eval-expr (first args)  x y))
-                    (exp-set  (eval-expr (second args) x y))
-                    (parity   (%literal-rational-parity (second args))))
-               (cond
-                 ((and parity (> (getf parity :den) 1))
-                  (ivs-apply-binary
-                   (lambda (a b) (iv-pow a b parity))
-                   base-set exp-set))
-                 (t
-                  (ivs-apply-binary #'iv-pow base-set exp-set)))))
-            ;; nth-root takes a literal integer N and one ival X.
-            (nth-root
-             (unless (and (= 2 (length args)) (integerp (first args)))
-               (error "nth-root expects (nth-root N X) with integer N"))
-             (ivs-apply-unary
-              (let ((n (first args)))
-                (lambda (iv) (iv-nth-root n iv)))
-              (eval-expr (second args) x y)))
-            (t (error "Unknown operator: ~a" op)))))))))
+     (multiple-value-bind (args site) (%extract-site (cdr expr))
+       (let* ((op (car expr))
+              (u  (cdr (assoc op *unary-ops*)))
+              (b  (cdr (assoc op *binary-ops*))))
+         (cond
+           (u (ivs-apply-unary
+               (if site (lambda (iv) (funcall u iv site)) u)
+               (eval-expr (first args) x y)))
+           (b (ivs-apply-binary
+               (if site (lambda (av bv) (funcall b av bv site)) b)
+               (eval-expr (first args) x y)
+               (eval-expr (second args) x y)))
+           (t
+            (case op
+              (+ (%n-ary #'iv-add 0 args x y))
+              (* (%n-ary #'iv-mul 1 args x y))
+              (- (cond ((null args) (error "(-) with no args"))
+                       ((null (cdr args))
+                        (ivs-apply-unary #'iv-neg (eval-expr (car args) x y)))
+                       (t (%n-ary #'iv-sub 0 args x y))))
+              (min (%n-ary #'iv-min nil args x y))
+              (max (%n-ary #'iv-max nil args x y))
+              (median (unless (= 3 (length args))
+                        (error "median expects exactly 3 args, got ~a"
+                               (length args)))
+                      (ivs-apply-ternary #'iv-median
+                                         (eval-expr (first args) x y)
+                                         (eval-expr (second args) x y)
+                                         (eval-expr (third args) x y)))
+              ;; ^ / expt: parser-side parity tag for rational exponents.  If
+              ;; the exponent is a literal *non-integer* rational p/q the
+              ;; AST-side helper extracts (:num :den :num-odd :den-odd);
+              ;; iv-pow uses that to evaluate exactly on negative bases
+              ;; (Algorithm 3.3 lite).  For integer exponents we fall through
+              ;; to the existing iv-pow path (parity ignored) -- this
+              ;; preserves bit-identity for the reference examples.
+              ((^ expt)
+               (let* ((base-set (eval-expr (first args)  x y))
+                      (exp-set  (eval-expr (second args) x y))
+                      (parity   (%literal-rational-parity (second args))))
+                 (cond
+                   ((and parity (> (getf parity :den) 1))
+                    (ivs-apply-binary
+                     (lambda (a b) (iv-pow a b parity))
+                     base-set exp-set))
+                   (t
+                    (ivs-apply-binary #'iv-pow base-set exp-set)))))
+              ;; nth-root takes a literal integer N and one ival X.
+              (nth-root
+               (unless (and (= 2 (length args)) (integerp (first args)))
+                 (error "nth-root expects (nth-root N X) with integer N"))
+               (ivs-apply-unary
+                (let ((n (first args)))
+                  (lambda (iv) (iv-nth-root n iv)))
+                (eval-expr (second args) x y)))
+              (t (error "Unknown operator: ~a" op))))))))
     (t (error "Bad expression: ~a" expr))))
 
 ;;; --- comparison of two interval sets -------------------------------------

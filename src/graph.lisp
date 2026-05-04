@@ -76,11 +76,10 @@
   "Returns a (HEIGHT x WIDTH) pixmap of :black / :white / :red."
   (declare (type fixnum width height)
            (type double-float L R B Top))
-  (multiple-value-bind (formula* nsites) (assign-sites formula)
-    (declare (ignore nsites))   ; reserved for diagnostics
-    (let ((pixmap (make-array (list height width)
-                              :element-type '(unsigned-byte 8)
-                              :initial-element +pixel-red+)))
+  (let ((formula* (assign-sites formula))
+        (pixmap (make-array (list height width)
+                            :element-type '(unsigned-byte 8)
+                            :initial-element +pixel-red+)))
       ;; Step 1: pyramid of pixel blocks, top-down.  Block size = power of 2.
       (let ((bsz (let ((s 1)) (loop while (and (<= (* s 2) width)
                                                (<= (* s 2) height))
@@ -90,7 +89,7 @@
       ;; Step 2: per-pixel subpixel refinement on remaining red pixels.
       (refine-subpixels formula* pixmap L R B Top width height
                         max-subpixel-depth)
-      pixmap)))
+      pixmap))
 
 ;;; --- block pass ----------------------------------------------------------
 
