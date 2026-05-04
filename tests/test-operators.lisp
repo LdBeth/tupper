@@ -533,5 +533,26 @@
                 (equal '(1 . 0) (ival-branch (first  r)))
                 (equal '(1 . 1) (ival-branch (second r))))))
 
+  (format t "~&== iv-div site tagging ==~%")
+  (check "iv-div 1/[-1,1] :site 0 tags both pieces"
+         (let ((r (iv-div (make-defined-cont 1d0 1d0)
+                          (make-defined-cont -1d0 1d0)
+                          0)))
+           (and (= 2 (length r))
+                ;; Pieces are pushed onto a list and then reversed; the
+                ;; ordering is negative-half then positive-half.
+                (equal '(1 . 0) (ival-branch (first  r)))
+                (equal '(1 . 1) (ival-branch (second r))))))
+  (check "iv-div with non-straddling denominator does not tag (no cut)"
+         (let ((r (iv-div (make-defined-cont 1d0 1d0)
+                          (make-defined-cont 2d0 3d0)
+                          0)))
+           (and (= 1 (length r))
+                (null (ival-branch (first r))))))
+  (check "iv-div with no site keeps NIL branch (back-compat)"
+         (let ((r (iv-div (make-defined-cont 1d0 1d0)
+                          (make-defined-cont -1d0 1d0))))
+           (every (lambda (iv) (null (ival-branch iv))) r)))
+
   (format t "~&Failures: ~a~%" *fail-count*)
   (zerop *fail-count*))

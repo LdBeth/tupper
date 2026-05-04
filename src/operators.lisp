@@ -100,12 +100,12 @@
                  :cont-lo cl :cont-hi t
                  :branch br))))
 
-(defun iv-div (a b)
+(defun iv-div (a b &optional site)
   (cond
     ;; Denominator is exactly {0}: undefined everywhere.
     ((and (zerop (ival-lo b)) (zerop (ival-hi b)))
      (list (make-undefined)))
-    ;; Denominator strictly avoids 0: single interval.
+    ;; Denominator strictly avoids 0: single interval, no cut.
     ((not (ival-contains-zero-p b))
      (list (%iv-div-nozero a b)))
     ;; Denominator straddles 0 -> two intervals (interval set).
@@ -113,6 +113,7 @@
      (let* ((bl (ival-lo b))
             (bh (ival-hi b))
             (eps least-positive-normalized-double-float)
+            (mask (and site (ash 1 site)))
             (results '()))
        (when (< bl 0d0)
          (let ((b- (make-ival :lo bl :hi (- eps)
@@ -127,12 +128,20 @@
                               :branch (ival-branch b))))
            (push (%iv-div-nozero a b+) results)))
        ;; Denominator straddling 0 means the result is undefined exactly
-       ;; at that point: stamp def-lo/cont-lo accordingly.
-       (mapcar (lambda (iv)
-                 (setf (ival-def-lo iv) nil
-                       (ival-cont-lo iv) nil)
-                 iv)
-               (nreverse results))))))
+       ;; at that point: stamp def-lo/cont-lo accordingly, then tag with
+       ;; site bits (negative-half = chosen 0; positive-half = chosen 1).
+       (let* ((ordered (nreverse results))
+              (n (length ordered)))
+         (loop for iv in ordered
+               for i from 0
+               do (setf (ival-def-lo iv) nil
+                        (ival-cont-lo iv) nil)
+                  (when (and site (= n 2))
+                    (let ((br (combine-branches
+                               (ival-branch iv)
+                               (cons mask (if (zerop i) 0 mask)))))
+                      (setf (ival-branch iv) br))))
+         ordered)))))
 
 ;;; --- sqrt ----------------------------------------------------------------
 
