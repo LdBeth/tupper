@@ -35,12 +35,12 @@
     (labels ((rewrite (node)
                (cond
                  ((atom node) node)
-                 ;; mod desugaring: rewrite first, then recurse, so
-                 ;; the inner floor and / each pick up their own sites.
+                 ;; mod desugaring: expand to (- a (* b (floor (/ a b)))), then
+                 ;; rewrite once so inner floor and / each pick up their own sites.
                  ((eq (car node) 'mod)
-                  (let ((a (rewrite (second node)))
-                        (b (rewrite (third node))))
-                    (rewrite `(- ,a (* ,b (floor (/ ,a ,b)))))))
+                  (rewrite `(- ,(second node)
+                               (* ,(third node)
+                                  (floor (/ ,(second node) ,(third node)))))))
                  (t
                   (let* ((head      (car node))
                          (clean     (nth-value 0 (%extract-site (cdr node))))
@@ -49,10 +49,9 @@
                       ((member head *branch-cutting-ops*)
                        (let* ((key  (cons head rec-args))
                               (site (or (gethash key table)
-                                        (setf (gethash key table)
-                                              (prog1 next
-                                                (incf next
-                                                      (cdr (assoc head *ops-arity*))))))))
+                                        (let ((s next))
+                                          (incf next (cdr (assoc head *ops-arity*)))
+                                          (setf (gethash key table) s)))))
                          `(,head ,@rec-args :site ,site)))
                       (t (cons head rec-args))))))))
       (values (rewrite formula) next))))

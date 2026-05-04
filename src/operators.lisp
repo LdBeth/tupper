@@ -342,20 +342,15 @@
   (- (+ a b c) (min a b c) (max a b c)))
 
 (defun iv-median (a b c)
-  (let ((vmin +pos-inf+)
-        (vmax +neg-inf+))
-    (declare (type double-float vmin vmax))
-    (dolist (xa (list (ival-lo a) (ival-hi a)))
-      (dolist (xb (list (ival-lo b) (ival-hi b)))
-        (dolist (xc (list (ival-lo c) (ival-hi c)))
-          (let ((m (%median3 xa xb xc)))
-            (when (< m vmin) (setf vmin m))
-            (when (> m vmax) (setf vmax m))))))
-    (with-combined-flags (dl dh cl br) (list a b c)
-      (list (make-ival :lo vmin :hi vmax
-                       :def-lo dl :def-hi dh
-                       :cont-lo cl :cont-hi t
-                       :branch br)))))
+  ;; median(a,b,c) = a+b+c - min(a,b,c) - max(a,b,c) is monotone in each
+  ;; argument (piecewise-linear, slope ∈ {0,1}), so min is at all-lo and
+  ;; max is at all-hi — two evaluations cover the 8-corner box.
+  (with-combined-flags (dl dh cl br) (list a b c)
+    (list (make-ival :lo (%median3 (ival-lo a) (ival-lo b) (ival-lo c))
+                     :hi (%median3 (ival-hi a) (ival-hi b) (ival-hi c))
+                     :def-lo dl :def-hi dh
+                     :cont-lo cl :cont-hi t
+                     :branch br))))
 
 ;;; --- floor / ceil / round / trunc ---------------------------------------
 ;;; All four are step functions; the implementation pattern is from the paper
