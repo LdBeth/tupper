@@ -6,6 +6,7 @@
            #:save-ppm
            #:ival #:make-ival
            #:eval-formula
+           #:assign-sites
            #:+pixel-black+
            #:+pixel-white+
            #:+pixel-red+

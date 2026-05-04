@@ -13,6 +13,7 @@
                              (:file "interval-set")
                              (:file "operators")
                              (:file "formula")
+                             (:file "cse")
                              (:file "graph")
                              (:file "output")
                              (:file "main")))))

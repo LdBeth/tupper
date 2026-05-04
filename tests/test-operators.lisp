@@ -438,5 +438,62 @@
            (and (<= (ival-lo (first r)) 24d0)
                 (>= (ival-hi (first r)) 24d0))))
 
+  ;;; --- Algorithm 3.2: site-assignment pre-pass ------------------------
+
+  (format t "~&== assign-sites ==~%")
+  (check "lone (floor x) gets :site 0"
+         (multiple-value-bind (f n) (assign-sites '(= y (floor x)))
+           (declare (ignore n))
+           (equal f '(= y (floor x :site 0)))))
+  (check "site-count for one floor occurrence is 1"
+         (multiple-value-bind (f n) (assign-sites '(= y (floor x)))
+           (declare (ignore f))
+           (= n 1)))
+  (check "two equal floor occurrences share a site (CSE)"
+         (multiple-value-bind (f n)
+             (assign-sites '(= (+ y (floor x)) (+ 1/3 (floor x))))
+           (declare (ignore n))
+           (equal f '(= (+ y (floor x :site 0))
+                        (+ 1/3 (floor x :site 0))))))
+  (check "two-floor formula reports site-count 1"
+         (multiple-value-bind (f n)
+             (assign-sites '(= (+ y (floor x)) (+ 1/3 (floor x))))
+           (declare (ignore f))
+           (= n 1)))
+  (check "different floor args get different sites"
+         (multiple-value-bind (f n)
+             (assign-sites '(= (floor x) (floor (+ x 1))))
+           (declare (ignore n))
+           (equal f '(= (floor x :site 0)
+                        (floor (+ x 1) :site 1)))))
+  (check "(mod x 1) is desugared into (- x (* 1 (floor (/ x 1))))"
+         (multiple-value-bind (f n) (assign-sites '(= y (mod x 1)))
+           (declare (ignore n))
+           (equal f '(= y (- x (* 1 (floor (/ x 1 :site 0)
+                                          :site 1)))))))
+  (check "sgn allocates 2 sites (next site = 2)"
+         (multiple-value-bind (f n)
+             (assign-sites '(= y (+ (sgn x) (floor x))))
+           (declare (ignore f))
+           (= n 3)))
+  (check "tan gets a site"
+         (multiple-value-bind (f n) (assign-sites '(= y (tan x)))
+           (declare (ignore n))
+           (equal f '(= y (tan x :site 0)))))
+  (check "/ gets a site"
+         (multiple-value-bind (f n) (assign-sites '(= y (/ 1 x)))
+           (declare (ignore n))
+           (equal f '(= y (/ 1 x :site 0)))))
+  (check "non-branch-cutting ops are unannotated"
+         (multiple-value-bind (f n)
+             (assign-sites '(= y (+ (sin x) (* x x))))
+           (declare (ignore n))
+           (equal f '(= y (+ (sin x) (* x x))))))
+  (check "assign-sites is idempotent"
+         (let* ((once (assign-sites '(= (+ y (floor x))
+                                        (+ 1/3 (floor x)))))
+                (twice (assign-sites once)))
+           (equal once twice)))
+
   (format t "~&Failures: ~a~%" *fail-count*)
   (zerop *fail-count*))
