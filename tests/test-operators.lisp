@@ -554,5 +554,20 @@
                           (make-defined-cont -1d0 1d0))))
            (every (lambda (iv) (null (ival-branch iv))) r)))
 
+  (format t "~&== iv-tan site tagging ==~%")
+  (check "iv-tan with range crossing pi/2 tags both segments"
+         ;; Range straddling pi/2 (~1.5708): use [1.0, 2.0]
+         (let ((r (iv-tan (make-defined-cont 1d0 2d0) 0)))
+           (and (= 2 (length r))
+                (equal '(1 . 0) (ival-branch (first  r)))
+                (equal '(1 . 1) (ival-branch (second r))))))
+  (check "iv-tan with range entirely between asymptotes is unsited"
+         (let ((r (iv-tan (make-defined-cont 0.1d0 1.4d0) 0)))
+           (and (= 1 (length r))
+                (null (ival-branch (first r))))))
+  (check "iv-tan with no site keeps NIL branch (back-compat)"
+         (let ((r (iv-tan (make-defined-cont 1d0 2d0))))
+           (every (lambda (iv) (null (ival-branch iv))) r)))
+
   (format t "~&Failures: ~a~%" *fail-count*)
   (zerop *fail-count*))

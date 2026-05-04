@@ -237,7 +237,9 @@
 (defun iv-cos (a) (%iv-sinusoid a #'%cos-bounds))
 
 ;;; tan: detect crossings of pi/2 + k*pi -> return interval set.
-(defun iv-tan (a)
+;;; Range >= pi already widens (single ival), so the post-tagging code
+;;; sees at most 2 pieces; one bit per occurrence is enough.
+(defun iv-tan (a &optional site)
   (let ((al (ival-lo a)) (ah (ival-hi a)))
     (declare (type double-float al ah))
     (cond
@@ -258,13 +260,28 @@
                       (push (cons left asym) segments)
                       (setf left asym))
               (push (cons left ah) segments)
-              (mapcar (lambda (seg)
-                        (make-ival :lo (trans-down (tan (car seg)))
-                                   :hi (trans-up   (tan (cdr seg)))
-                                   :def-lo nil :def-hi (ival-def-hi a)
-                                   :cont-lo nil :cont-hi t
-                                   :branch (ival-branch a)))
-                      (nreverse segments))))))))))
+              (let* ((ordered (nreverse segments))
+                     (mask (and site (ash 1 site)))
+                     (pieces
+                       (loop for seg in ordered
+                             for i from 0
+                             collect
+                             (let ((iv (make-ival
+                                        :lo (trans-down (tan (car seg)))
+                                        :hi (trans-up   (tan (cdr seg)))
+                                        :def-lo nil :def-hi (ival-def-hi a)
+                                        :cont-lo nil :cont-hi t
+                                        :branch (ival-branch a)))
+                                   (br-add (when (and site
+                                                      (>= (length ordered) 2))
+                                             (cons mask
+                                                   (if (zerop i) 0 mask)))))
+                               (when br-add
+                                 (setf (ival-branch iv)
+                                       (combine-branches
+                                        (ival-branch iv) br-add)))
+                               iv))))
+                pieces)))))))))
 
 ;;; --- pow -----------------------------------------------------------------
 ;;; Integer exponents (any base) and real exponents on positive bases handled
