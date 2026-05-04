@@ -42,8 +42,23 @@
     (!        . ,#'iv-factorial)))
 
 (defparameter *binary-ops*
-  `((/        . ,#'iv-div)
-    (mod      . ,#'iv-mod)))
+  `((/        . ,#'iv-div)))
+
+;;; Branch-cutting ops (Algorithm 3.2): these consume a trailing
+;;; (:site N) keyword pair on their AST arg list, attached by
+;;; assign-sites at graph-formula entry.  When :site is absent they
+;;; behave as before (untagged output).
+(defparameter *sited-ops*
+  '(floor ceiling round truncate sgn tan /)
+  "Operators whose AST args may carry a trailing :site N keyword.")
+
+(defun %extract-site (args)
+  "Return (values plain-args site-or-nil) splitting off a trailing
+   :site N pair if present."
+  (let ((p (position :site args)))
+    (if p
+        (values (subseq args 0 p) (getf (nthcdr p args) :site))
+        (values args nil))))
 
 ;;; ^ / expt and nth-root use a special dispatch path below: the parser
 ;;; peeks at the literal exponent / N to extract parity / integer info
@@ -75,16 +90,30 @@
     ((symbolp expr)
      (error "Unknown variable in expression: ~a" expr))
     ((consp expr)
-     (let* ((op (car expr)) (args (cdr expr))
-            (u (cdr (assoc op *unary-ops*)))
-            (b (cdr (assoc op *binary-ops*))))
-       (cond
-         (u (ivs-apply-unary u (eval-expr (first args) x y)))
-         (b (ivs-apply-binary b
-                              (eval-expr (first args) x y)
-                              (eval-expr (second args) x y)))
-         (t
-          (case op
+     (let* ((op (car expr))
+            (raw-args (cdr expr)))
+       (multiple-value-bind (args site)
+           (if (member op *sited-ops*)
+               (%extract-site raw-args)
+               (values raw-args nil))
+         (let* ((u (cdr (assoc op *unary-ops*)))
+                (b (cdr (assoc op *binary-ops*))))
+           (cond
+             (u (let ((ufn u))
+                  (ivs-apply-unary
+                   (if site
+                       (lambda (iv) (funcall ufn iv site))
+                       ufn)
+                   (eval-expr (first args) x y))))
+             (b (let ((bfn b))
+                  (ivs-apply-binary
+                   (if site
+                       (lambda (av bv) (funcall bfn av bv site))
+                       bfn)
+                   (eval-expr (first args) x y)
+                   (eval-expr (second args) x y))))
+             (t
+              (case op
             (+ (%n-ary #'iv-add 0 args x y))
             (* (%n-ary #'iv-mul 1 args x y))
             (- (cond ((null args) (error "(-) with no args"))
@@ -126,7 +155,7 @@
               (let ((n (first args)))
                 (lambda (iv) (iv-nth-root n iv)))
               (eval-expr (second args) x y)))
-            (t (error "Unknown operator: ~a" op)))))))
+            (t (error "Unknown operator: ~a" op)))))))))
     (t (error "Bad expression: ~a" expr))))
 
 ;;; --- comparison of two interval sets -------------------------------------

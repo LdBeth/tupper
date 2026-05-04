@@ -464,17 +464,6 @@
              (push iv pieces)))
          (nreverse pieces))))))
 
-;;; --- mod -----------------------------------------------------------------
-;;; iv-mod a b = a - b * floor(a/b), composed via the existing set-aware
-;;; primitives.  Discontinuities at every wraparound flow naturally out of
-;;; the iv-floor split.
-
-(defun iv-mod (a b)
-  (let* ((quot (ivs-apply-binary #'iv-div  (list a) (list b)))
-         (fl   (ivs-apply-unary  #'iv-floor quot))
-         (prod (ivs-apply-binary #'iv-mul   (list b) fl)))
-    (ivs-apply-binary #'iv-sub (list a) prod)))
-
 ;;; --- nth-root ------------------------------------------------------------
 ;;; iv-nth-root N X: real nth-root.  N is a positive integer.
 ;;;   - odd N  -> total function on R; sign-preserving and monotone increasing.

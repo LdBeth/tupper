@@ -101,25 +101,31 @@
            (and (= (length r) 3)
                 (notany #'ival-cont-lo r))))
 
-  (format t "~&== mod ==~%")
-  (check "mod(3.5, 2) = 1.5"
-         (let* ((r (iv-mod (make-defined-cont 3.5d0 3.5d0)
-                           (make-defined-cont 2d0 2d0)))
+  (format t "~&== mod (desugared via assign-sites) ==~%")
+  (check "mod(3.5, 2) = 1.5 via eval-expr on desugared form"
+         (let* ((ann (assign-sites '(mod 3.5 2)))
+                (r (eval-expr ann
+                              (make-defined-cont 0d0 0d0)
+                              (make-defined-cont 0d0 0d0)))
                 (iv (first r)))
            (and (= (length r) 1)
                 (< (abs (- (ival-lo iv) 1.5d0)) 1d-9)
                 (< (abs (- (ival-hi iv) 1.5d0)) 1d-9))))
   (check "mod(x, 1) over [0.2, 0.8] is [0.2, 0.8] (no wrap)"
-         (let* ((r (iv-mod (make-defined-cont 0.2d0 0.8d0)
-                           (make-defined-cont 1d0 1d0)))
+         (let* ((ann (assign-sites '(mod x 1)))
+                (r (eval-expr ann
+                              (make-defined-cont 0.2d0 0.8d0)
+                              (make-defined-cont 0d0 0d0)))
                 (iv (first r)))
            (and (= (length r) 1)
                 (<= (ival-lo iv) 0.2d0)
                 (>= (ival-hi iv) 0.8d0))))
   (check "mod(x, 1) over [0.5, 1.5] returns >=2 ivals (wrap at 1)"
-         (>= (length (iv-mod (make-defined-cont 0.5d0 1.5d0)
-                             (make-defined-cont 1d0 1d0)))
-             2))
+         (let* ((ann (assign-sites '(mod x 1)))
+                (r (eval-expr ann
+                              (make-defined-cont 0.5d0 1.5d0)
+                              (make-defined-cont 0d0 0d0))))
+           (>= (length r) 2)))
 
   (format t "~&== pow ==~%")
   (check "[2,3]^2 covers [4,9] (positive base, even)"
@@ -598,6 +604,32 @@
   (check "iv-sgn with no site keeps NIL branch (back-compat)"
          (let ((r (iv-sgn (make-defined-cont -1d0 1d0))))
            (every (lambda (iv) (null (ival-branch iv))) r)))
+
+  (format t "~&== eval-expr :site dispatch ==~%")
+  (check "(floor x :site 0) at x=[1.5,2.7] returns two branch-tagged pieces"
+         (let ((r (eval-expr '(floor x :site 0)
+                             (make-defined-cont 1.5d0 2.7d0)
+                             (make-defined-cont 0d0 0d0))))
+           (and (= 2 (length r))
+                (equal '(1 . 0) (ival-branch (first  r)))
+                (equal '(1 . 1) (ival-branch (second r))))))
+  (check "annotated formula evaluation: LHS/RHS floor pieces share site"
+         ;; Manually annotate (= (+ y (floor x)) (+ 1/3 (floor x))) so both
+         ;; floors carry :site 0.  Evaluate L and R; they share matching
+         ;; tags so cmp-sets only pairs (L_i, R_i) with equal i.
+         (let* ((annotated (assign-sites
+                            '(= (+ y (floor x)) (+ 1/3 (floor x)))))
+                (lhs (second annotated))
+                (rhs (third  annotated))
+                (xi (make-defined-cont 0.99d0 1.0d0))
+                (yi (make-defined-cont 1.3d0  1.4d0))
+                (lvs (eval-expr lhs xi yi))
+                (rvs (eval-expr rhs xi yi)))
+           ;; Each side has 2 pieces, with branch tags (1 . 0) and (1 . 1).
+           (and (= 2 (length lvs)) (= 2 (length rvs))
+                (every (lambda (iv) (member (ival-branch iv)
+                                            '((1 . 0) (1 . 1)) :test #'equal))
+                       (append lvs rvs)))))
 
   (format t "~&Failures: ~a~%" *fail-count*)
   (zerop *fail-count*))
