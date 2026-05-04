@@ -9,24 +9,41 @@
    even after merging adjacent elements.  Reset before a graph run; check
    afterwards for diagnostic information.")
 
-;;; Branch tag (Algorithm 3.2): NIL = "all branches"; non-NIL = non-empty
-;;; integer set of compatible sheets.  Combination is intersection.
+;;; Branch tag (Algorithm 3.2, paper §12): partial function from
+;;; branch-cut sites to chosen branches.  Representation:
+;;;   NIL                       == empty partial function (leaf eval)
+;;;   (cut . chosen)            == cons of two non-negative integers;
+;;;                                bit i of `cut` is set iff site i has
+;;;                                been visited; bit positions of `chosen`
+;;;                                hold the choice taken at each visited
+;;;                                site.
+;;; Combination is union with agreement (paper's IsAFunction):
+;;;   m = a.cut & b.cut                         (sites both visited)
+;;;   compatible iff (a.chosen & m) = (b.chosen & m)
+;;; If incompatible, returns :conflict; callers (ivs-apply via
+;;; branches-all-compatible-p) drop the operand tuple.
+;;; Inside operator bodies the :conflict return is unreachable because
+;;; ivs-apply pre-filters; treat it as a programmer error there.
 
 (defun combine-branches (a b)
   (cond ((null a) b)
         ((null b) a)
-        (t (intersection a b))))
+        (t (let* ((ac (car a)) (ach (cdr a))
+                  (bc (car b)) (bch (cdr b))
+                  (m  (logand ac bc)))
+             (if (= (logand ach m) (logand bch m))
+                 (cons (logior ac bc) (logior ach bch))
+                 :conflict)))))
 
 (defun branches-all-compatible-p (ivs)
-  "T iff folding combine-branches over the operand branch tags never
-   produces an empty intersection from non-NIL inputs."
+  "T iff folding combine-branches across operand branches never
+   yields :conflict.  NIL operands are skipped (identity)."
   (let ((acc nil))
     (dolist (iv ivs t)
       (let ((b (ival-branch iv)))
-        (cond ((null b))
-              ((null acc) (setf acc b))
-              (t (setf acc (intersection acc b))
-                 (when (null acc) (return nil))))))))
+        (unless (null b)
+          (setf acc (if (null acc) b (combine-branches acc b)))
+          (when (eq acc :conflict) (return nil)))))))
 
 (defun ivs-merge-pair (a b)
   "Merge two ivals into one whose value bound covers both, OR-ing flags."

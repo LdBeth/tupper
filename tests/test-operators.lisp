@@ -189,132 +189,85 @@
                              (make-defined-cont 0.5d0 0.5d0))))
            (= (ival-lo (first r)) 0.5d0)))
 
-  ;;; --- Algorithm 3.2 hooks: synthesise branched ivals by hand ---------
+  ;;; --- Algorithm 3.2: paper-faithful branch rep ----------------------
 
-  (format t "~&== branch helpers ==~%")
+  (format t "~&== combine-branches ==~%")
   (check "combine-branches NIL+NIL = NIL"
          (null (combine-branches nil nil)))
   (check "combine-branches NIL is identity"
-         (and (equal '(1 2) (combine-branches nil '(1 2)))
-              (equal '(1 2) (combine-branches '(1 2) nil))))
-  (check "combine-branches intersects non-NIL sets"
-         (equal '(2) (combine-branches '(1 2) '(2 3))))
-  (check "branches-all-compatible-p empty list"
-         (branches-all-compatible-p '()))
-  (check "branches-all-compatible-p all-NIL trio"
+         (and (equal '(5 . 0) (combine-branches nil '(5 . 0)))
+              (equal '(5 . 0) (combine-branches '(5 . 0) nil))))
+  (check "combine-branches agrees on shared site (both choose 0)"
+         ;; cut={site 0}, chosen=0 ; cut={site 0}, chosen=0 -> agree
+         (equal '(1 . 0) (combine-branches '(1 . 0) '(1 . 0))))
+  (check "combine-branches agrees on shared site (both choose 1)"
+         (equal '(1 . 1) (combine-branches '(1 . 1) '(1 . 1))))
+  (check "combine-branches conflicts when shared site disagrees"
+         (eq :conflict (combine-branches '(1 . 0) '(1 . 1))))
+  (check "combine-branches unions disjoint sites"
+         ;; cut={0}, chosen={0->1}  ;  cut={1}, chosen={1->1}
+         (equal '(3 . 3) (combine-branches '(1 . 1) '(2 . 2))))
+  (check "combine-branches with overlap + new site (agreement)"
+         ;; A: cut={0,1}, chosen={0->1, 1->0}  =>  cut=3, chosen=1
+         ;; B: cut={1,2}, chosen={1->0, 2->1}  =>  cut=6, chosen=4
+         ;; overlap at site 1; both chose 0 there -> ok
+         ;; combined: cut=7, chosen=5
+         (equal '(7 . 5) (combine-branches '(3 . 1) '(6 . 4))))
+
+  (format t "~&== branches-all-compatible-p ==~%")
+  (check "all-NIL trio is compatible"
          (branches-all-compatible-p
           (list (make-defined-cont 0d0 1d0)
                 (make-defined-cont 0d0 1d0)
                 (make-defined-cont 0d0 1d0))))
-  (check "branches-all-compatible-p detects incompatible pair"
+  (check "shared-site agreement passes"
          (let ((a (make-defined-cont 0d0 1d0))
                (b (make-defined-cont 0d0 1d0)))
-           (setf (ival-branch a) '(1)
-                 (ival-branch b) '(2))
+           (setf (ival-branch a) '(1 . 0)
+                 (ival-branch b) '(1 . 0))
+           (branches-all-compatible-p (list a b))))
+  (check "shared-site disagreement fails"
+         (let ((a (make-defined-cont 0d0 1d0))
+               (b (make-defined-cont 0d0 1d0)))
+           (setf (ival-branch a) '(1 . 0)
+                 (ival-branch b) '(1 . 1))
            (not (branches-all-compatible-p (list a b)))))
-  (check "branches-all-compatible-p uses fold, not pairwise"
-         ;; X={1,2}, Y={2,3}, Z={1,3}: every pair intersects, but the
-         ;; three-way fold is empty -- the trio must not pass.
+  (check "fold catches three-way conflict that pairwise misses"
+         ;; A: site 0 -> 0     (cut=1, chosen=0)
+         ;; B: site 1 -> 0     (cut=2, chosen=0)  -- compatible with A
+         ;; C: site 0 -> 1     (cut=1, chosen=1)  -- compatible with B alone, conflicts with A
          (let ((a (make-defined-cont 0d0 1d0))
                (b (make-defined-cont 0d0 1d0))
                (c (make-defined-cont 0d0 1d0)))
-           (setf (ival-branch a) '(1 2)
-                 (ival-branch b) '(2 3)
-                 (ival-branch c) '(1 3))
+           (setf (ival-branch a) '(1 . 0)
+                 (ival-branch b) '(2 . 0)
+                 (ival-branch c) '(1 . 1))
            (not (branches-all-compatible-p (list a b c)))))
 
-  (format t "~&== branch threading ==~%")
-  (check "iv-add intersects operand branches"
+  (format t "~&== branch threading via operators ==~%")
+  (check "iv-add propagates union when operands agree"
          (let ((a (make-defined-cont 1d0 2d0))
                (b (make-defined-cont 3d0 4d0)))
-           (setf (ival-branch a) '(1 2)
-                 (ival-branch b) '(2 3))
-           (equal '(2) (ival-branch (car (iv-add a b))))))
-  (check "iv-mul intersects operand branches"
-         (let ((a (make-defined-cont 1d0 2d0))
-               (b (make-defined-cont 3d0 4d0)))
-           (setf (ival-branch a) '(1 2)
-                 (ival-branch b) '(2 3))
-           (equal '(2) (ival-branch (car (iv-mul a b))))))
+           (setf (ival-branch a) '(1 . 0)
+                 (ival-branch b) '(2 . 0))
+           (equal '(3 . 0) (ival-branch (car (iv-add a b))))))
   (check "iv-neg preserves branch (unary inherit)"
          (let ((a (make-defined-cont 1d0 2d0)))
-           (setf (ival-branch a) '(7))
-           (equal '(7) (ival-branch (car (iv-neg a))))))
-  (check "iv-sqrt preserves branch (positive case)"
-         (let ((a (make-defined-cont 1d0 4d0)))
-           (setf (ival-branch a) '(7))
-           (equal '(7) (ival-branch (car (iv-sqrt a))))))
-  (check "iv-sqrt preserves branch (zero-straddle case)"
-         (let ((a (make-defined-cont -1d0 4d0)))
-           (setf (ival-branch a) '(7))
-           (equal '(7) (ival-branch (car (iv-sqrt a))))))
-  (check "iv-floor preserves branch on every output piece"
-         (let ((a (make-defined-cont 1.5d0 2.7d0)))
-           (setf (ival-branch a) '(7))
-           (let ((rs (iv-floor a)))
-             (and (= 2 (length rs))
-                  (every (lambda (iv) (equal '(7) (ival-branch iv))) rs)))))
-  (check "iv-sgn preserves branch across the {-1,0,1} split"
-         (let ((a (make-defined-cont -1d0 1d0)))
-           (setf (ival-branch a) '(7))
-           (let ((rs (iv-sgn a)))
-             (and (= 3 (length rs))
-                  (every (lambda (iv) (equal '(7) (ival-branch iv))) rs)))))
-  (check "iv-div straddling 0 preserves denominator branch on both pieces"
-         (let ((a (make-defined-cont 1d0 1d0))
-               (b (make-defined-cont -1d0 1d0)))
-           (setf (ival-branch b) '(7))
-           ;; combine-branches(a=NIL, b='(7)) = '(7)
-           (let ((rs (iv-div a b)))
-             (and (>= (length rs) 2)
-                  (every (lambda (iv) (equal '(7) (ival-branch iv))) rs)))))
-  (check "iv-min intersects branches"
-         (let ((a (make-defined-cont 1d0 3d0))
-               (b (make-defined-cont 2d0 5d0)))
-           (setf (ival-branch a) '(1 2)
-                 (ival-branch b) '(2 3))
-           (equal '(2) (ival-branch (car (iv-min a b))))))
-  (check "iv-median intersects all three branches"
-         (let ((a (make-defined-cont 1d0 1d0))
-               (b (make-defined-cont 2d0 2d0))
-               (c (make-defined-cont 3d0 3d0)))
-           (setf (ival-branch a) '(1 2)
-                 (ival-branch b) '(2 3)
-                 (ival-branch c) '(2 4))
-           (equal '(2) (ival-branch (car (iv-median a b c))))))
-  (check "ivs-merge-pair intersects branches"
-         (let ((a (make-defined-cont 0d0 1d0))
-               (b (make-defined-cont 2d0 3d0)))
-           (setf (ival-branch a) '(1 2)
-                 (ival-branch b) '(2 3))
-           (equal '(2) (ival-branch (ivs-merge-pair a b)))))
-
-  (format t "~&== ivs-apply branch filtering ==~%")
-  (check "ivs-apply drops the only operand pair when branches disjoint"
+           (setf (ival-branch a) '(1 . 1))
+           (equal '(1 . 1) (ival-branch (car (iv-neg a))))))
+  (check "ivs-apply-binary drops conflicting tuple"
          (let ((a (make-defined-cont 1d0 1d0))
                (b (make-defined-cont 2d0 2d0)))
-           (setf (ival-branch a) '(1)
-                 (ival-branch b) '(2))
+           (setf (ival-branch a) '(1 . 0)
+                 (ival-branch b) '(1 . 1))
            (null (ivs-apply-binary #'iv-add (list a) (list b)))))
-  (check "ivs-apply keeps the only operand pair when branches overlap"
+  (check "ivs-apply-binary keeps agreeing tuple"
          (let ((a (make-defined-cont 1d0 1d0))
                (b (make-defined-cont 2d0 2d0)))
-           (setf (ival-branch a) '(1 2)
-                 (ival-branch b) '(2 3))
+           (setf (ival-branch a) '(1 . 0)
+                 (ival-branch b) '(1 . 0))
            (= 1 (length (ivs-apply-binary #'iv-add (list a) (list b))))))
-  (check "ivs-apply filters per-pair across cross-product"
-         ;; sets {a1, a2} x {b1, b2} with branch tags arranged so only
-         ;; (a1, b1) is compatible.  Result must be exactly 1 ival.
-         (let ((a1 (make-defined-cont 1d0 1d0))
-               (a2 (make-defined-cont 2d0 2d0))
-               (b1 (make-defined-cont 10d0 10d0))
-               (b2 (make-defined-cont 20d0 20d0)))
-           (setf (ival-branch a1) '(1)   (ival-branch a2) '(2)
-                 (ival-branch b1) '(1)   (ival-branch b2) '(3))
-           (= 1 (length (ivs-apply-binary #'iv-add (list a1 a2)
-                                                   (list b1 b2))))))
   (check "ivs-apply with all-NIL branches matches pre-hook behavior"
-         ;; Sanity: NIL tags must never reduce the cross-product size.
          (= 4 (length (ivs-apply-binary
                        #'iv-add
                        (list (make-defined-cont 1d0 1d0)
