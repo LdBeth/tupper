@@ -631,5 +631,19 @@
                                             '((1 . 0) (1 . 1)) :test #'equal))
                        (append lvs rvs)))))
 
+  (format t "~&== Algorithm 3.2 acceptance: Figure 11(a) ==~%")
+  (check "y + floor(x) = 1/3 + floor(x) finishes (zero red) at 128x128 d=4"
+         (let* ((pixmap (graph-formula
+                         '(= (+ y (floor x)) (+ 1/3 (floor x)))
+                         -10d0 10d0 -10d0 10d0 128 128
+                         :max-subpixel-depth 4))
+                (red 0))
+           (loop for py from 0 below 128 do
+             (loop for px from 0 below 128 do
+               (when (= (aref pixmap py px) +pixel-red+)
+                 (incf red))))
+           (format t "~&    [fig11a] red pixels: ~a~%" red)
+           (zerop red)))
+
   (format t "~&Failures: ~a~%" *fail-count*)
   (zerop *fail-count*))

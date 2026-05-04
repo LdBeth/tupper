@@ -196,11 +196,14 @@
                   (t :ft))))))
 
 (defun cmp-sets (op as bs)
-  "Compare interval-sets pairwise, OR-ing the bool-iv across all pairs."
+  "Compare interval-sets pairwise, OR-ing the bool-iv across compatible pairs.
+   Pairs with conflicting branch tags are skipped (Algorithm 3.2)."
   (let ((acc :ff))
     (dolist (a as)
       (dolist (b bs)
-        (setf acc (bool-or acc (cmp-pair op a b)))))
+        (unless (eq (combine-branches (ival-branch a) (ival-branch b))
+                    :conflict)
+          (setf acc (bool-or acc (cmp-pair op a b))))))
     acc))
 
 ;;; --- formula evaluator ---------------------------------------------------

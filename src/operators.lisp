@@ -387,15 +387,19 @@
            ((= (- fhi flo) 1d0)
             ;; Two-piece cut: tag piece 0 with chosen=0, piece 1 with
             ;; chosen=(ash 1 site).  Untagged when SITE is NIL.
+            ;; Each piece is well-defined on its subdomain; the branch
+            ;; tag (not the def flag) encodes the domain restriction.
+            ;; cmp-sets filters by branch compatibility to prevent
+            ;; cross-branch false positives.
             (let* ((mask (and site (ash 1 site)))
                    (br0  (if site (combine-branches br (cons mask 0))    br))
                    (br1  (if site (combine-branches br (cons mask mask)) br)))
               (list (make-ival :lo flo :hi flo
-                               :def-lo nil :def-hi dh
+                               :def-lo dl :def-hi dh
                                :cont-lo nil :cont-hi dh
                                :branch br0)
                     (make-ival :lo fhi :hi fhi
-                               :def-lo nil :def-hi dh
+                               :def-lo dl :def-hi dh
                                :cont-lo nil :cont-hi dh
                                :branch br1))))
            (t

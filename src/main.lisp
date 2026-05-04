@@ -34,7 +34,10 @@
     ("cuberoot"  (= y (^ x 1/3))
                  -2d0 3d0 -2d0 3d0  256 256 0)
     ("gamma"     (= y (gamma x))
-                 -4d0 5d0 -4d0 5d0  256 256 0)))
+                 -4d0 5d0 -4d0 5d0  256 256 0)
+    ;; Algorithm 3.2 acceptance target: paper figure 11(a).
+    ("fig11a"    (= (+ y (floor x)) (+ 1/3 (floor x)))
+                 -10d0 10d0 -10d0 10d0  128 128 4)))
 
 (defun run-example (entry &key (out-dir "out/"))
   (destructuring-bind (name formula L R B Top w h depth) entry
