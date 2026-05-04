@@ -569,5 +569,35 @@
          (let ((r (iv-tan (make-defined-cont 1d0 2d0))))
            (every (lambda (iv) (null (ival-branch iv))) r)))
 
+  (format t "~&== iv-sgn site tagging ==~%")
+  (check "iv-sgn [-1,1] :site 0 tags 3 pieces with chosen 0/1/2"
+         (let ((r (iv-sgn (make-defined-cont -1d0 1d0) 0)))
+           (and (= 3 (length r))
+                (equal '(3 . 0) (ival-branch (first  r)))   ; -1
+                (equal '(3 . 1) (ival-branch (second r)))   ;  0
+                (equal '(3 . 2) (ival-branch (third  r)))))) ; +1
+  (check "iv-sgn [-1,0] :site 0 tags 2 pieces with chosen 0/1"
+         (let ((r (iv-sgn (make-defined-cont -1d0 0d0) 0)))
+           (and (= 2 (length r))
+                (equal '(3 . 0) (ival-branch (first  r)))
+                (equal '(3 . 1) (ival-branch (second r))))))
+  (check "iv-sgn [0,1] :site 0 tags 2 pieces with chosen 1/2"
+         (let ((r (iv-sgn (make-defined-cont 0d0 1d0) 0)))
+           (and (= 2 (length r))
+                (equal '(3 . 1) (ival-branch (first  r)))
+                (equal '(3 . 2) (ival-branch (second r))))))
+  (check "iv-sgn fully positive is unsited (single piece, no cut)"
+         (let ((r (iv-sgn (make-defined-cont 1d0 2d0) 0)))
+           (and (= 1 (length r))
+                (null (ival-branch (first r))))))
+  (check "iv-sgn :site 3 places bits at positions 3,4 (mask=24)"
+         (let ((r (iv-sgn (make-defined-cont -1d0 1d0) 3)))
+           (and (equal '(24 . 0)  (ival-branch (first  r)))
+                (equal '(24 . 8)  (ival-branch (second r)))   ; chosen=01<<3=8
+                (equal '(24 . 16) (ival-branch (third  r)))))) ; chosen=10<<3=16
+  (check "iv-sgn with no site keeps NIL branch (back-compat)"
+         (let ((r (iv-sgn (make-defined-cont -1d0 1d0))))
+           (every (lambda (iv) (null (ival-branch iv))) r)))
+
   (format t "~&Failures: ~a~%" *fail-count*)
   (zerop *fail-count*))

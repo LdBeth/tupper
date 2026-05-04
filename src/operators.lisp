@@ -424,7 +424,13 @@
 ;;; interval set covering the relevant subset of {-1, 0, 1}, with cont-lo
 ;;; cleared (sgn is discontinuous at 0).
 
-(defun iv-sgn (iv)
+;;; sgn: three-valued: -1, 0, +1.  When the input straddles 0 the result
+;;; is an interval set covering the relevant subset of {-1, 0, 1}, with
+;;; cont-lo cleared (sgn is discontinuous at 0).  Branch tagging
+;;; (Algorithm 3.2) reserves 2 bit-positions per occurrence (site, site+1)
+;;; encoding pieces -1, 0, +1 as chosen-bits 00, 01, 10 respectively.
+
+(defun iv-sgn (iv &optional site)
   (let ((lo (ival-lo iv))
         (hi (ival-hi iv))
         (dl (ival-def-lo iv))
@@ -436,11 +442,27 @@
       ((> lo 0d0) (list (make-singleton  1d0 dl dh br)))
       ((and (= lo 0d0) (= hi 0d0)) (list (make-singleton 0d0 dl dh br)))
       (t
-       ;;; make-singleton v nil dh expands to the same make-ival call; use it.
-       (loop for (include val) in `((,(< lo 0d0) -1d0)
-                                    (t            0d0)
-                                    (,(> hi 0d0)  1d0))
-             when include collect (make-singleton val nil dh br))))))
+       (let ((mask (and site (ash 3 site)))
+             (pieces '()))
+         (when (< lo 0d0)
+           (let ((iv (make-singleton -1d0 nil dh br)))
+             (when site
+               (setf (ival-branch iv)
+                     (combine-branches br (cons mask 0))))
+             (push iv pieces)))
+         ;; The 0 piece is always included in the straddle case.
+         (let ((iv (make-singleton 0d0 nil dh br)))
+           (when site
+             (setf (ival-branch iv)
+                   (combine-branches br (cons mask (ash 1 site)))))
+           (push iv pieces))
+         (when (> hi 0d0)
+           (let ((iv (make-singleton 1d0 nil dh br)))
+             (when site
+               (setf (ival-branch iv)
+                     (combine-branches br (cons mask (ash 2 site)))))
+             (push iv pieces)))
+         (nreverse pieces))))))
 
 ;;; --- mod -----------------------------------------------------------------
 ;;; iv-mod a b = a - b * floor(a/b), composed via the existing set-aware
