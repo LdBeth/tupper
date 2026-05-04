@@ -337,7 +337,7 @@
 ;;; One step    -> two singleton intervals (the discontinuity straddles).
 ;;; >1 step     -> hull [f(lo), f(hi)] with cont-lo := nil.
 
-(defun %iv-step (iv step-fn)
+(defun %iv-step (iv step-fn &optional site)
   (let ((lo (ival-lo iv))
         (hi (ival-hi iv))
         (dl (ival-def-lo iv))
@@ -353,20 +353,28 @@
          (declare (type double-float flo fhi))
          (cond
            ((= flo fhi)
+            ;; Singleton-step case: no cut performed; preserve input branch.
             (list (make-ival :lo flo :hi flo
                              :def-lo dl :def-hi dh
                              :cont-lo dl :cont-hi dh
                              :branch br)))
            ((= (- fhi flo) 1d0)
-            (list (make-ival :lo flo :hi flo
-                             :def-lo nil :def-hi dh
-                             :cont-lo nil :cont-hi dh
-                             :branch br)
-                  (make-ival :lo fhi :hi fhi
-                             :def-lo nil :def-hi dh
-                             :cont-lo nil :cont-hi dh
-                             :branch br)))
+            ;; Two-piece cut: tag piece 0 with chosen=0, piece 1 with
+            ;; chosen=(ash 1 site).  Untagged when SITE is NIL.
+            (let* ((mask (and site (ash 1 site)))
+                   (br0  (if site (combine-branches br (cons mask 0))    br))
+                   (br1  (if site (combine-branches br (cons mask mask)) br)))
+              (list (make-ival :lo flo :hi flo
+                               :def-lo nil :def-hi dh
+                               :cont-lo nil :cont-hi dh
+                               :branch br0)
+                    (make-ival :lo fhi :hi fhi
+                               :def-lo nil :def-hi dh
+                               :cont-lo nil :cont-hi dh
+                               :branch br1))))
            (t
+            ;; Hull case (>1 step): result spans many cuts; conservatively
+            ;; preserve input branch -- no per-piece distinction available.
             (list (make-ival :lo flo :hi fhi
                              :def-lo dl :def-hi dh
                              :cont-lo nil :cont-hi dh
@@ -377,13 +385,13 @@
 (defun %fround1 (x) (declare (type double-float x)) (values (fround x)))
 (defun %ftrunc1 (x) (declare (type double-float x)) (values (ftruncate x)))
 
-(defun iv-floor (iv) (%iv-step iv #'%ffloor1))
-(defun iv-ceil  (iv) (%iv-step iv #'%fceil1))
+(defun iv-floor (iv &optional site) (%iv-step iv #'%ffloor1 site))
+(defun iv-ceil  (iv &optional site) (%iv-step iv #'%fceil1  site))
 ;;; round: CL's fround is round-half-to-even (banker's rounding).
-(defun iv-round (iv) (%iv-step iv #'%fround1))
+(defun iv-round (iv &optional site) (%iv-step iv #'%fround1 site))
 ;;; trunc: ftruncate is floor for x>=0, ceil for x<0.  The step pattern at
 ;;; every integer is the same as floor's, so the shared scaffold suffices.
-(defun iv-trunc (iv) (%iv-step iv #'%ftrunc1))
+(defun iv-trunc (iv &optional site) (%iv-step iv #'%ftrunc1 site))
 
 ;;; --- sgn -----------------------------------------------------------------
 ;;; Three-valued: -1, 0, +1.  When the input straddles 0 the result is an

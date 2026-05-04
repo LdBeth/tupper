@@ -495,5 +495,43 @@
                 (twice (assign-sites once)))
            (equal once twice)))
 
+  (format t "~&== %iv-step site tagging ==~%")
+  (check "iv-floor [1.5,2.7] :site 0 -> piece-0 chosen=0, piece-1 chosen=1"
+         (let ((r (iv-floor (make-defined-cont 1.5d0 2.7d0) 0)))
+           (and (= 2 (length r))
+                (equal '(1 . 0) (ival-branch (first  r)))
+                (equal '(1 . 1) (ival-branch (second r))))))
+  (check "iv-floor :site 3 places bits at position 3"
+         (let ((r (iv-floor (make-defined-cont 1.5d0 2.7d0) 3)))
+           (and (equal '(8 . 0) (ival-branch (first  r)))
+                (equal '(8 . 8) (ival-branch (second r))))))
+  (check "iv-floor with no site keeps branch NIL (back-compat)"
+         (let ((r (iv-floor (make-defined-cont 1.5d0 2.7d0))))
+           (and (= 2 (length r))
+                (every (lambda (iv) (null (ival-branch iv))) r))))
+  (check "iv-floor singleton-step result is unsited even when site is given"
+         (let ((r (iv-floor (make-defined-cont 1.2d0 1.8d0) 0)))
+           (and (= 1 (length r))
+                (null (ival-branch (first r))))))
+  (check "iv-floor hull case (>1 step) is unsited even when site is given"
+         (let ((r (iv-floor (make-defined-cont 1.2d0 4.7d0) 0)))
+           (and (= 1 (length r))
+                (null (ival-branch (first r))))))
+  (check "iv-ceil :site 0 produces both pieces tagged"
+         (let ((r (iv-ceil (make-defined-cont 1.5d0 2.7d0) 0)))
+           (and (= 2 (length r))
+                (equal '(1 . 0) (ival-branch (first  r)))
+                (equal '(1 . 1) (ival-branch (second r))))))
+  (check "iv-round :site 0 produces both pieces tagged"
+         (let ((r (iv-round (make-defined-cont 1.2d0 1.8d0) 0)))
+           (and (= 2 (length r))
+                (equal '(1 . 0) (ival-branch (first  r)))
+                (equal '(1 . 1) (ival-branch (second r))))))
+  (check "iv-trunc :site 0 produces both pieces tagged for [0.5,1.5]"
+         (let ((r (iv-trunc (make-defined-cont 0.5d0 1.5d0) 0)))
+           (and (= 2 (length r))
+                (equal '(1 . 0) (ival-branch (first  r)))
+                (equal '(1 . 1) (ival-branch (second r))))))
+
   (format t "~&Failures: ~a~%" *fail-count*)
   (zerop *fail-count*))
